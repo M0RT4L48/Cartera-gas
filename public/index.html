@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gas_App | Control Financiero y Débito</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23172033'/%3E%3Cpath d='M32 10c8 10 14 17 14 26a14 14 0 0 1-28 0c0-9 6-16 14-26z' fill='%23c50063'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="login" class="login hidden">
+    <form id="loginForm" class="login-card" autocomplete="on">
+      <h1>Gas_App <span>Financiero</span></h1>
+      <p class="mut">Control de Cartera CxC y Sistema de Débito Prepago</p>
+      <label>Usuario<input name="usuario" autocomplete="username" required autofocus></label>
+      <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label>
+      <div id="loginErr" class="err"></div>
+      <button class="btn accent" type="submit">Entrar</button>
+    </form>
+  </div>
+
+  <div id="app" class="hidden">
+    <header class="hdr">
+      <div>
+        <h1>Gas_App <span>Financiero</span></h1>
+        <p>Control de Cartera CxC y Sistema de Débito Prepago</p>
+      </div>
+      <div class="hdr-r">
+        <div class="pill"><i class="dot"></i><span id="whoName"></span> · <span id="whoRole"></span></div>
+        <button class="hbtn" id="btnPass" type="button">Cambiar contraseña</button>
+        <button class="hbtn" id="btnOut" type="button">Cerrar sesión</button>
+      </div>
+    </header>
+
+    <div class="shell">
+      <div class="ctx">
+        <label>Estación<select id="gEst"></select></label>
+        <label>Fecha de corte<input type="date" id="gCorte"></label>
+        <button class="btn small" id="btnHoy" type="button" title="Usar la fecha de hoy como corte">Hoy</button>
+        <button class="btn small" id="btnSnap" type="button" title="Volver a la fecha de corte de los datos">Fecha de datos</button>
+        <span class="datainfo" id="datainfo"></span>
+      </div>
+
+      <div class="kpis" id="kpis"></div>
+
+      <div class="panel">
+        <nav class="tabsbar" id="tabs"></nav>
+        <main id="view" class="view" tabindex="-1"></main>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-box" id="modalBox"></div></div>
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script src="core.js"></script>
+  <script src="pages1.js"></script>
+  <script src="pages2.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>

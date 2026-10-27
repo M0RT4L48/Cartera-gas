@@ -1,0 +1,13 @@
+{
+  "name": "cartera-gas",
+  "version": "2.0.0",
+  "description": "Gas_App Financiero - Control de cartera CxC y débito prepago",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": { "node": ">=22.13.0" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
+    "prueba": "node --disable-warning=ExperimentalWarning server/prueba.js",
+    "respaldo": "node --disable-warning=ExperimentalWarning server/respaldo.js"
+  }
+}
