@@ -33,7 +33,7 @@
 **Gas_App Financiero** es una solución integral para el control de cuentas por cobrar (CxC), facturación de despachos a crédito y administración de saldos a favor (débito prepago) en estaciones de servicio gasolineras.
 
 ### Principios Fundamentales:
-- **Sin dependencias externas ni conexión requerida:** Funciona en Node.js 22.13+ con base de datos SQLite embebida (`data/cartera.db`).
+- **Base de datos:** requiere `@libsql/client`; usa SQLite local (`data/cartera.db`) por defecto y Turso si están configuradas `TURSO_DATABASE_URL` y `TURSO_AUTH_TOKEN`.
 - **Separación estricta de esquemas financieros:**
   - **Cartera CxC:** Crédito otorgado con vencimiento a plazo, facturas y saldos por cobrar.
   - **Débito Prepago:** Anticipos y depósitos recibidos previamente de los que se van descontando consumos de combustible (saldos a favor del cliente).

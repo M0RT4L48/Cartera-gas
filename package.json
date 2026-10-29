@@ -5,9 +5,13 @@
   "private": true,
   "license": "UNLICENSED",
   "engines": { "node": ">=22.13.0" },
+  "dependencies": {
+    "@libsql/client": "^0.18.0"
+  },
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning server/index.js",
     "prueba": "node --disable-warning=ExperimentalWarning server/prueba.js",
-    "respaldo": "node --disable-warning=ExperimentalWarning server/respaldo.js"
+    "respaldo": "node --disable-warning=ExperimentalWarning server/respaldo.js",
+    "migrar:turso": "node --disable-warning=ExperimentalWarning server/migrar_turso.js"
   }
 }

@@ -12,7 +12,8 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY --chown=node:node package.json ./
+COPY --chown=node:node package.json package-lock.json ./
+RUN npm ci --omit=dev
 COPY --chown=node:node public ./public
 COPY --chown=node:node server ./server
 COPY --chown=node:node etl ./etl

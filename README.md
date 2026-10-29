@@ -1,12 +1,13 @@
 # Gas_App Financiero · Control de Cartera CxC y Débito Prepago
 
 Aplicación web basada en `Gas_App.xlsx` y en el diseño de `gas_app_financiero.html`.
-**Sin dependencias externas** (no requiere `npm install` ni internet): Node.js 22.13+ con SQLite integrado.
+Requiere Node.js 22.13+ y `@libsql/client`; usa SQLite local por defecto o Turso cuando se configuran sus variables.
 
 ## Arranque (Windows / PowerShell)
 
 ```powershell
 cd cartera-gas
+npm install
 node --disable-warning=ExperimentalWarning server/index.js      # o doble clic en iniciar.bat
 ```
 
@@ -15,6 +16,14 @@ Abre <http://localhost:3000>. En el **primer arranque** la consola muestra el us
 
 Variables opcionales: `PORT` (3000), `HOST` (127.0.0.1; `0.0.0.0` para red local), `COOKIE_SECURE=1` (con HTTPS),
 `SESION_HORAS` (10), `ADMIN_PASSWORD` (solo primer arranque), `DB_PATH`, `PYTHON` (ejecutable para la carga de Excel).
+Para Turso configura juntas `TURSO_DATABASE_URL` y `TURSO_AUTH_TOKEN`; sin ellas se usa SQLite local en `DB_PATH`.
+El primer arranque crea el esquema remoto. Para copiar la base SQLite local existente a Turso, configura las dos variables localmente y ejecuta:
+
+```powershell
+npm run migrar:turso -- --confirmar-sobrescritura
+```
+
+Este comando reemplaza los datos que haya en Turso con todas las tablas de `DB_PATH`; respalda ambas bases antes de usarlo. Configura las mismas variables como Environment Variables en Render.
 
 ## Ejecutar con Docker
 
@@ -28,7 +37,7 @@ docker compose logs -f cartera-gas
 
 Abre <http://localhost:3000>. Para acceder desde otras computadoras de la red local, usa la dirección IP del equipo que ejecuta Docker, por ejemplo `http://192.168.1.20:3000`, y permite el puerto 3000 en el firewall de ese equipo.
 
-La base SQLite vive en el volumen Docker `cartera-gas-data`, dentro del disco Linux de Docker Desktop, para evitar la penalización de I/O de SQLite sobre carpetas de Windows. El volumen sobrevive al actualizar o recrear el contenedor y no se copia dentro de la imagen. Los respaldos y archivos temporales de importación siguen en `respaldos` y `tmp` dentro de esta carpeta.
+La base SQLite local vive en el volumen Docker `cartera-gas-data`, dentro del disco Linux de Docker Desktop, para evitar la penalización de I/O de SQLite sobre carpetas de Windows. El volumen sobrevive al actualizar o recrear el contenedor y no se copia dentro de la imagen. Los respaldos y archivos temporales de importación siguen en `respaldos` y `tmp` dentro de esta carpeta. Si configuras variables Turso, la base remota toma prioridad sobre SQLite local.
 
 Si ya tenías la aplicación ejecutándose con una carpeta `data` enlazada desde Windows, detén el contenedor y copia sus archivos al volumen antes de volver a iniciarlo. Desde PowerShell, en la carpeta `cartera-gas`, ejecuta:
 

@@ -1,13 +1,16 @@
 'use strict';
 // Pruebas de integracion (usa una COPIA temporal de la BD; no toca data/cartera.db)
 const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path'); const assert = require('node:assert');
+const { spawn } = require('node:child_process');
 const src = path.join(__dirname, '..', 'data', 'cartera.db');
 const tmp = path.join(os.tmpdir(), `cartera_test_${process.pid}.db`);
 fs.copyFileSync(src, tmp);
 process.env.DB_PATH = tmp; process.env.ADMIN_PASSWORD = 'Inicial123';
+(async () => {
 const L = require('./lib'); const { server } = require('./index');
-L.q.run("UPDATE usuarios SET pass_hash=?, must_change=1 WHERE usuario='admin'", L.hashPassword('Inicial123'));
-assert.equal(L.sembrarAdmin(), null, 'La contraseña configurada del administrador no se devuelve para imprimirla en logs');
+await L.ready;
+await L.q.run("UPDATE usuarios SET pass_hash=?, must_change=1 WHERE usuario='admin'", L.hashPassword('Inicial123'));
+assert.equal(await L.sembrarAdmin(), null, 'La contraseña configurada del administrador no se devuelve para imprimirla en logs');
 const XLSX = process.env.XLSX_PRUEBA || '/mnt/user-data/uploads/Gas_App.xlsx';
 
 let base, ok = 0, testBackup = null;
@@ -90,8 +93,8 @@ server.listen(0, '127.0.0.1', async () => {
       assert.ok(csvResult.data.includes("'=1+1"));
     } finally {
       if (r.data.k_cliente) {
-        L.tx(() => {
-          for (const table of ['credito', 'cliente_extra', 'dim_cliente']) L.q.run(`DELETE FROM ${table} WHERE k_cliente=?`, r.data.k_cliente);
+        await L.tx(async () => {
+          for (const table of ['credito', 'cliente_extra', 'dim_cliente']) await L.q.run(`DELETE FROM ${table} WHERE k_cliente=?`, r.data.k_cliente);
         });
       }
     }
@@ -219,13 +222,13 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal((await call('a', 'GET', ruta + '&desde=2026-10-23&hasta=2026-10-22')).status, 400);
     assert.ok((await call('a', 'GET', '/api/bitacora')).data.rows.some((row) => row.accion === 'EXPORT' && row.detalle.includes(`estado_cuenta ${k}`)));
 
-    L.q.run('DELETE FROM pagos WHERE k_cliente=?', k);
-    L.q.run('DELETE FROM fact_cxc_app WHERE k_cliente=?', k);
-    L.q.run('DELETE FROM debito_app WHERE k_cliente=?', k);
-    L.q.run('DELETE FROM fact_cxc_app WHERE id=?', despacho.data.id);
-    L.q.run('DELETE FROM credito WHERE k_cliente=?', k);
-    L.q.run('DELETE FROM cliente_extra WHERE k_cliente=?', k);
-    L.q.run('DELETE FROM dim_cliente WHERE k_cliente=?', k);
+    await L.q.run('DELETE FROM pagos WHERE k_cliente=?', k);
+    await L.q.run('DELETE FROM fact_cxc_app WHERE k_cliente=?', k);
+    await L.q.run('DELETE FROM debito_app WHERE k_cliente=?', k);
+    await L.q.run('DELETE FROM fact_cxc_app WHERE id=?', despacho.data.id);
+    await L.q.run('DELETE FROM credito WHERE k_cliente=?', k);
+    await L.q.run('DELETE FROM cliente_extra WHERE k_cliente=?', k);
+    await L.q.run('DELETE FROM dim_cliente WHERE k_cliente=?', k);
   });
   await t('prepago CxC consume solo lo aplicado y conserva el remanente', async () => {
     const factura = (await detalle()).abiertas[0];
@@ -311,7 +314,7 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal((await call('a', 'GET', '/api/cliente?k=' + enc(r.data.k_cliente))).data.cliente.limite, 123456);
     assert.equal((await call('a', 'GET', '/api/cliente?k=' + enc(r.data.k_cliente))).data.cliente.email, 'actualizado@prueba.mx');
     assert.equal((await call('a', 'PUT', '/api/credito', { k_cliente: r.data.k_cliente, limite: -5, dias: 1 })).status, 400);
-    L.q.run('DELETE FROM fact_cxc_app WHERE id=?', facturaCambioEstacion.data.id);
+    await L.q.run('DELETE FROM fact_cxc_app WHERE id=?', facturaCambioEstacion.data.id);
   });
   await t('gestión con promesa genera alerta', async () => {
     assert.equal((await call('a', 'POST', '/api/gestiones', { k_cliente: cliPagos.k_cliente, tipo: 'Llamada', resultado: 'Promesa de pago', fecha: '2026-10-10', promesa_fecha: '2026-10-12', promesa_monto: 500, notas: 'prueba' })).status, 201);
@@ -380,7 +383,7 @@ server.listen(0, '127.0.0.1', async () => {
   if (process.env.POR_FACTURAR_XLSX && fs.existsSync(process.env.POR_FACTURAR_XLSX)) {
     await t('por facturar: importa Layout Consumo en la copia temporal', async () => {
       const antes = (await call('a', 'GET', '/api/por-facturar')).data;
-      const maxId = L.q.get('SELECT COALESCE(MAX(id),0) id FROM fact_cxc_app').id;
+      const maxId = (await L.q.get('SELECT COALESCE(MAX(id),0) id FROM fact_cxc_app')).id;
       const r = await call('a', 'POST', '/api/por-facturar/carga', null, fs.readFileSync(process.env.POR_FACTURAR_XLSX));
       assert.equal(r.status, 201, JSON.stringify(r.data));
       assert.equal(r.data.importados, 12);
@@ -389,9 +392,9 @@ server.listen(0, '127.0.0.1', async () => {
       assert.equal(despues.total_despachos, antes.total_despachos + 12);
       assert.ok(Math.abs(despues.total_monto - antes.total_monto - 8078.09) < 0.01);
       assert.ok((await call('a', 'GET', '/api/bitacora')).data.rows.some((row) => row.accion === 'POR_FACTURAR_CARGA' && row.usuario === 'admin'));
-      const nuevos = L.q.all('SELECT id FROM fact_cxc_app WHERE id>?', maxId);
+      const nuevos = await L.q.all('SELECT id FROM fact_cxc_app WHERE id>?', maxId);
       assert.equal(nuevos.length, 12);
-      L.q.run('DELETE FROM fact_cxc_app WHERE id>?', maxId);
+      await L.q.run('DELETE FROM fact_cxc_app WHERE id>?', maxId);
     });
   }
   await t('carga: valida modo y módulos parciales', async () => {
@@ -423,7 +426,7 @@ server.listen(0, '127.0.0.1', async () => {
       assert.equal((await call('a', 'GET', '/api/cliente?k=' + enc((await call('a', 'GET', '/api/clientes?q=Cliente Prueba')).data.rows[0].k_cliente))).data.cliente.limite, 123456);
       assert.ok((await call('a', 'GET', '/api/usuarios')).data.rows.length >= 4);
       assert.equal((await call('a', 'GET', '/api/catalogos')).data.estaciones.length, 2);
-      L.q.run('DELETE FROM fact_cxc_app WHERE id=?', facturaPreservada.data.id);
+      await L.q.run('DELETE FROM fact_cxc_app WHERE id=?', facturaPreservada.data.id);
     });
   }
 
@@ -532,20 +535,31 @@ server.listen(0, '127.0.0.1', async () => {
     const clienteNuevo = (await call('a', 'GET', '/api/cliente?k=' + enc(altaCliente.data.k_cliente))).data;
     assert.equal(clienteNuevo.cliente.saldo_total, 123.45 + 80.25 + 120);
     assert.equal((await call('l', 'POST', '/api/cartera/facturas', { ...body, k_cliente: cliPagos.k_cliente })).status, 403);
-    for (const id of [existente.data.id, nuevo.data.id, pendiente1.data.id, pendiente2.data.id, facturaRecalculo.data.id]) L.q.run('DELETE FROM fact_cxc_app WHERE id=?', id);
-    L.q.run('DELETE FROM pagos WHERE no_factura=? AND k_cliente=?', 'PRUEBA-MANUAL-EDIT', cliPagos.k_cliente);
-    L.q.run('DELETE FROM cliente_extra WHERE k_cliente=?', nueva.data.k_cliente);
-    L.q.run('DELETE FROM credito WHERE k_cliente=?', nueva.data.k_cliente);
-    L.q.run('DELETE FROM dim_cliente WHERE k_cliente=?', nueva.data.k_cliente);
-    L.q.run('DELETE FROM cliente_extra WHERE k_cliente=?', altaCliente.data.k_cliente);
-    L.q.run('DELETE FROM credito WHERE k_cliente=?', altaCliente.data.k_cliente);
-    L.q.run('DELETE FROM dim_cliente WHERE k_cliente=?', altaCliente.data.k_cliente);
+    for (const id of [existente.data.id, nuevo.data.id, pendiente1.data.id, pendiente2.data.id, facturaRecalculo.data.id]) await L.q.run('DELETE FROM fact_cxc_app WHERE id=?', id);
+    await L.q.run('DELETE FROM pagos WHERE no_factura=? AND k_cliente=?', 'PRUEBA-MANUAL-EDIT', cliPagos.k_cliente);
+    await L.q.run('DELETE FROM cliente_extra WHERE k_cliente=?', nueva.data.k_cliente);
+    await L.q.run('DELETE FROM credito WHERE k_cliente=?', nueva.data.k_cliente);
+    await L.q.run('DELETE FROM dim_cliente WHERE k_cliente=?', nueva.data.k_cliente);
+    await L.q.run('DELETE FROM cliente_extra WHERE k_cliente=?', altaCliente.data.k_cliente);
+    await L.q.run('DELETE FROM credito WHERE k_cliente=?', altaCliente.data.k_cliente);
+    await L.q.run('DELETE FROM dim_cliente WHERE k_cliente=?', altaCliente.data.k_cliente);
   });
 
   console.log(`\n${ok} pruebas correctas${process.exitCode ? ' (con fallas)' : ''}`);
-  server.close();
-  L.db.close();
-  for (const s of ['', '-wal', '-shm']) fs.rmSync(tmp + s, { force: true });
-  if (testBackup && fs.existsSync(testBackup)) fs.rmSync(testBackup, { force: true });
+  await new Promise((resolve) => server.close(resolve));
+  await L.client.close();
+  const archivosTemporales = ['', '-wal', '-shm', ...(testBackup ? [testBackup] : [])]
+    .map((s) => s === '' || s === '-wal' || s === '-shm' ? tmp + s : s);
+  if (process.platform === 'win32') {
+    const cleanup = `const fs=require('node:fs');const parent=${process.pid};const files=${JSON.stringify(archivosTemporales)};function remove(){try{process.kill(parent,0);setTimeout(remove,100);return}catch{}for(const file of files)fs.rmSync(file,{force:true})}remove()`;
+    const child = spawn(process.execPath, ['-e', cleanup], { detached: true, stdio: 'ignore', windowsHide: true });
+    child.unref();
+  } else {
+    for (const file of archivosTemporales) fs.rmSync(file, { force: true });
+  }
   setTimeout(() => process.exit(process.exitCode || 0), 100);
+});
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
 });
