@@ -20,14 +20,14 @@
         ]);
         const favor = r.rows.filter((x) => x.saldo > 0.005);
         $('#debSaldos').innerHTML = html`
-          <div class="card" style="padding:0;overflow:hidden"><div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#f8fafc;border-bottom:1px solid var(--line)">
+          <div class="card debito-table-card" style="padding:0;overflow:hidden"><div class="debito-table-head" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:var(--bg);border-bottom:1px solid var(--line)">
             <h3 style="margin:0">Clientes con Saldo a Favor</h3><span><span class="chip ok">${favor.length} clientes · ${money(r.totales.a_favor)}</span>
             ${r.totales.negativo < 0 ? html` <span class="chip bad" title="Clientes cuyos consumos superan sus abonos">Consumido en exceso ${money(r.totales.negativo)}</span>` : ''}</span></div>
-            <div class="tablewrap" style="border:0;border-radius:0;max-height:270px"><table><thead><tr><th>Cliente</th><th>Estación</th><th class="n">Saldo a favor disponible</th></tr></thead><tbody>
+            <div class="tablewrap debito-table-scroll" role="region" aria-label="Clientes con saldo a favor" tabindex="0" style="border:0;border-radius:0;max-height:270px"><table class="debito-saldos-table"><thead><tr><th>Cliente</th><th>Estación</th><th class="n">Saldo a favor disponible</th></tr></thead><tbody>
             ${favor.length ? favor.map((x) => html`<tr class="click" data-go="#/cliente/${encodeURIComponent(x.k_cliente)}"><td class="wrap">${x.cliente}</td><td>${corto(x.estacion)}</td><td class="n strong pos">${money(x.saldo, 2)}</td></tr>`)
               : html`<tr><td colspan="3" class="empty">Ningún cliente tiene saldo a favor.</td></tr>`}</tbody></table></div></div>
-          <div class="card" style="padding:0;overflow:hidden;margin-top:18px"><div style="padding:12px 16px;background:#f8fafc;border-bottom:1px solid var(--line)"><h3 style="margin:0">Movimientos <small>${int(mv.total)} en total</small></h3></div>
-            <div class="tablewrap" style="border:0;border-radius:0;max-height:320px"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Operación</th><th>Método</th><th>Banco</th><th>Folio</th><th class="n">Monto</th><th></th></tr></thead><tbody>
+          <div class="card debito-table-card" style="padding:0;overflow:hidden;margin-top:18px"><div style="padding:12px 16px;background:var(--bg);border-bottom:1px solid var(--line)"><h3 style="margin:0">Movimientos <small>${int(mv.total)} en total</small></h3></div>
+            <div class="tablewrap debito-table-scroll" role="region" aria-label="Movimientos de prepago" tabindex="0" style="border:0;border-radius:0;max-height:320px"><table class="debito-movimientos-table"><thead><tr><th>Fecha</th><th>Cliente</th><th>Operación</th><th>Método</th><th>Banco</th><th>Folio</th><th class="n">Monto</th><th></th></tr></thead><tbody>
             ${mv.rows.length ? mv.rows.map((m) => { const ab = m.abono > 0; return html`<tr><td>${fdate(m.fecha)}</td><td class="wrap">${m.cliente}</td><td>${badge(m.tipo)}</td>
               <td>${m.metodo || ''}</td><td>${m.banco || ''}</td><td>${m.folio}</td><td class="n strong ${ab ? 'pos' : ''}">${ab ? '+' : '−'}${money(ab ? m.abono : m.importe, 2)}</td>
               <td>${m.origen === 'app' && puedeEscribir ? html`<button class="btn small danger" data-act="anularDeb" data-id="${m.id}">Anular</button>` : ''}</td></tr>`; })
@@ -36,13 +36,13 @@
       } catch (e) { $('#debSaldos').innerHTML = html`<div class="note">${e.message}</div>`.s; }
     };
     setView(html`
-      <div class="h"><h2>Control de Débito (Prepago)</h2><p>Gestión de abonos anticipados y consumos de combustible. Los saldos a favor no forman parte de la cartera por cobrar.</p></div>
-      <div class="split">
+      <div class="h"><h2>Registro de Prepago</h2><p>Gestión de abonos anticipados y consumos de combustible. Los saldos a favor no forman parte de la cartera por cobrar.</p></div>
+      <div class="split debito-layout">
         <div>${puedeEscribir ? html`<form id="formDeb" class="formcard"><h3>Registrar Movimiento</h3><div class="f">
           <label>Cliente${pick.html}</label>
           <div><label style="margin-bottom:6px">Tipo de operación</label><div class="seg">
-            <label><input type="radio" name="tipo" value="ABONO" checked><span class="ab">Abono (+)</span></label>
-            <label><input type="radio" name="tipo" value="CONSUMO"><span class="co">Consumo (−)</span></label></div></div>
+            <label><input type="radio" name="tipo" value="ABONO" checked><span class="ab">Deposito (+)</span></label>
+            <label><input type="radio" name="tipo" value="CONSUMO"><span class="co">Devolucion (−)</span></label></div></div>
           <div class="row2">
             <label id="deb-metodo-wrap">Método de pago<select name="metodo" id="deb-metodo" required>
               <option value="">Selecciona un método…</option>${S.cat.metodos_pago.map((m) => opt(m.nombre, m.nombre))}
@@ -55,7 +55,7 @@
           <div class="err" id="debErr"></div>
           <button class="btn dark block" type="submit">Registrar Operación</button></div></form>`
           : html`<div class="note info">Tu rol es de solo consulta: puedes ver saldos y movimientos, pero no registrarlos.</div>`}</div>
-        <div><div class="bar" id="filtros">
+        <div class="debito-panel"><div class="bar" id="filtros">
           <label style="flex:1">Buscar cliente<input data-f="q" placeholder="Nombre del cliente…" style="width:100%"></label>
           <label>Operación<select data-f="tipo"><option value="">Todas</option><option value="RECARGA">Abonos</option><option value="CONSUMO">Consumos</option></select></label>
           <label>Desde<input data-f="desde" type="date"></label><label>Hasta<input data-f="hasta" type="date"></label>
@@ -71,17 +71,31 @@
       const bancoWrap = $('#deb-banco-wrap'), metodoWrap = $('#deb-metodo-wrap');
       const tipoInputs = [...f.querySelectorAll('input[name=tipo]')];
       const actualizarCamposAbono = () => {
-        const requiereBanco = f.querySelector('input[name=tipo]:checked').value === 'ABONO';
-        bancoWrap.classList.toggle('hidden', !requiereBanco);
-        metodoWrap.classList.toggle('hidden', !requiereBanco);
-        $('#deb-banco').required = requiereBanco;
-        $('#deb-metodo').required = requiereBanco;
-        if (!requiereBanco) {
-          $('#deb-banco').value = '';
+        const esAbono = f.querySelector('input[name=tipo]:checked').value === 'ABONO';
+        metodoWrap.classList.toggle('hidden', !esAbono);
+        $('#deb-metodo').required = esAbono;
+        if (!esAbono) {
           $('#deb-metodo').value = '';
+          bancoWrap.classList.add('hidden');
+          $('#deb-banco').required = false;
+          $('#deb-banco').value = '';
+          return;
+        }
+        const metodoVal = ($('#deb-metodo').value || '').trim();
+        const metodoObj = S.cat.metodos_pago.find((m) => m.nombre === metodoVal);
+        const esEfectivo = /^efectivo$/i.test(metodoVal);
+        const esConBanco = !esEfectivo && Boolean(
+          (metodoObj && metodoObj.requiere_banco) ||
+          /cheque|tarjeta|transferencia/i.test(metodoVal)
+        );
+        bancoWrap.classList.toggle('hidden', !esConBanco);
+        $('#deb-banco').required = esConBanco;
+        if (!esConBanco) {
+          $('#deb-banco').value = '';
         }
       };
       tipoInputs.forEach((input) => input.addEventListener('change', actualizarCamposAbono));
+      $('#deb-metodo').addEventListener('change', actualizarCamposAbono);
       actualizarCamposAbono();
       f.onsubmit = async (e) => {
       e.preventDefault(); $('#debErr').textContent = '';
@@ -107,15 +121,50 @@
     let lista;
     try { lista = await CG.clientesLista(false); } catch (e) { return errorView(e); }
     const pick = clientePicker('pago-cliente', lista, { placeholder: 'Selecciona un cliente…' });
-    let facs = [], cli = null;
+    let facs = [], cli = null, saldoPrepago = 0, tienePrepago = false, deudaTotal = 0;
     const fifoKey = (f) => f.fecha_vencimiento || f.fecha_factura || '9999-12-31';
     const monto = () => parseFloat($('#pago-monto').value) || 0;
     const aplicado = () => $$inputs().reduce((s, i) => s + (parseFloat(i.value) || 0), 0);
     const $$inputs = () => [...document.querySelectorAll('.input-aplicar')];
+    const distribuirFIFO = (total) => {
+      let restante = total;
+      $$inputs().forEach((input) => {
+        const pendiente = parseFloat(input.dataset.pending) || 0;
+        const asignado = Math.min(pendiente, restante);
+        input.value = asignado > 0 ? asignado.toFixed(2) : '';
+        restante -= asignado;
+      });
+      badgeRest();
+    };
     const badgeRest = () => {
       const rest = Math.round((monto() - aplicado()) * 100) / 100, b = $('#pago-restante');
       b.textContent = `Sin distribuir: ${money(Math.max(0, rest), 2)}`;
       b.className = 'chip' + (rest < -0.01 ? ' bad' : rest > 0.005 ? ' warn' : ' ok');
+      validarMontos();
+    };
+    const validarMontos = () => {
+      const total = monto();
+      const chk = $('#pago-usar-prepago');
+      const usandoPrepago = tienePrepago && chk && chk.checked;
+      const limitePrepago = usandoPrepago && $('#pago-prepago-monto') ? Number($('#pago-prepago-monto').value) : total;
+      const invalidaFactura = $$inputs().find((i) => (parseFloat(i.value) || 0) > (parseFloat(i.dataset.pending) || 0) + 0.005);
+      let error = '';
+      if (cli && total > deudaTotal + 0.005) {
+        error = `No se puede exceder la deuda actual (${money(deudaTotal, 2)}).`;
+      } else if (usandoPrepago && total > saldoPrepago + 0.005) {
+        error = `El monto excede el saldo de prepago disponible (${money(saldoPrepago, 2)}).`;
+      } else if (invalidaFactura) {
+        error = `El monto aplicado a la factura ${invalidaFactura.dataset.no} no puede exceder su saldo pendiente (${money(invalidaFactura.dataset.pending, 2)}).`;
+      } else if (aplicado() > total + 0.005) {
+        error = `El monto aplicado supera el monto solicitado (${money(total, 2)}).`;
+      }
+      $('#pagoErr').textContent = error;
+      const montoValido = !!cli && total > 0 && total <= deudaTotal + 0.005 &&
+        (!usandoPrepago || (total <= saldoPrepago + 0.005 && limitePrepago > 0));
+      $('#btn-fifo').disabled = !montoValido;
+      $('#btn-sin-aplicar').disabled = !montoValido;
+      $('#btn-guardar').disabled = !montoValido || Boolean(invalidaFactura) || aplicado() > total + 0.005;
+      return montoValido && !invalidaFactura && aplicado() <= total + 0.005;
     };
     const renderFacs = () => {
       $('#pagoFacs').innerHTML = !cli ? html`<tr><td colspan="4" class="empty">Selecciona un cliente para cargar su cartera.</td></tr>`.s
@@ -125,33 +174,141 @@
           <td class="n"><input class="input-aplicar" type="number" min="0" max="${f.saldo}" step="0.01" data-no="${f.no_factura}" data-est="${f.estacion_id}" data-pending="${f.saldo}" placeholder="0.00" style="width:130px;text-align:right;font-weight:600"></td></tr>`)}`.s;
       badgeRest();
     };
+    const renderPrepagoBox = (saldo, tiene) => {
+      const box = $('#pago-prepago-box');
+      if (!box) return;
+      if (!cli) {
+        box.innerHTML = html`
+          <div style="border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--bg)">
+            <label class="inline-check" style="font-weight:600;color:var(--mut)">
+              <input type="checkbox" id="pago-usar-prepago" disabled> Aplicar a saldo de prepago
+            </label>
+            <div style="margin-top:4px;font-size:12px;color:var(--mut)">Selecciona un cliente para consultar su saldo de prepago</div>
+          </div>`.s;
+        return;
+      }
+      const limite = Math.min(saldo, facs.reduce((s, f) => s + Number(f.saldo || 0), 0));
+      const puedeAplicar = tiene && limite > 0.005;
+      box.innerHTML = html`
+        <div style="border:1px solid ${tiene ? 'var(--ok)' : 'var(--line)'};border-radius:8px;padding:10px 12px;background:${tiene ? 'var(--okbg)' : 'var(--bg)'}">
+          <label class="inline-check" style="font-weight:600;color:${tiene ? 'var(--oktext)' : 'var(--mut)'}">
+            <input type="checkbox" id="pago-usar-prepago" ${puedeAplicar ? '' : 'disabled'}> Aplicar a saldo de prepago
+          </label>
+          ${tiene
+            ? html`<div style="margin-top:6px;font-size:13px;color:var(--oktext)">Saldo disponible: <b>${money(saldo, 2)}</b></div>
+                   ${puedeAplicar ? '' : html`<div style="margin-top:4px;font-size:12px;color:var(--mut)">No hay facturas pendientes para aplicar el prepago</div>`}
+                   <div id="pago-prepago-monto-wrap" style="margin-top:8px;display:none">
+                     <label style="font-size:13px">Monto a aplicar desde prepago (MXN)<input id="pago-prepago-monto" type="number" step="0.01" min="0.01" max="${limite}" value="${limite.toFixed(2)}" style="width:160px;font-weight:600"></label>
+                   </div>`
+            : html`<div style="margin-top:4px;font-size:12px;color:var(--mut)">Cliente sin saldo de prepago</div>`}
+        </div>`.s;
+      const chk = $('#pago-usar-prepago');
+      if (puedeAplicar && chk) {
+        chk.addEventListener('change', () => {
+          actualizarVisibilidad();
+          if (chk.checked) distribuirFIFO(parseFloat($('#pago-prepago-monto').value) || 0);
+        });
+        const prepInp = $('#pago-prepago-monto');
+        if (prepInp) {
+          prepInp.addEventListener('input', () => {
+            $('#pago-monto').value = prepInp.value;
+            distribuirFIFO(parseFloat(prepInp.value) || 0);
+          });
+        }
+      }
+    };
+    const actualizarVisibilidad = () => {
+      const chk = $('#pago-usar-prepago');
+      const usandoPrepago = tienePrepago && chk && chk.checked;
+      const wrapMonto = $('#pago-monto-wrap');
+      const wrapMetodo = $('#pago-metodo-wrap');
+      const wrapBanco = $('#pago-banco-wrap');
+      const wrapPrepMonto = $('#pago-prepago-monto-wrap');
+
+      if (wrapPrepMonto) wrapPrepMonto.style.display = usandoPrepago ? '' : 'none';
+      if (wrapMonto) wrapMonto.style.display = usandoPrepago ? 'none' : '';
+      if (wrapMetodo) wrapMetodo.style.display = usandoPrepago ? 'none' : '';
+
+      if (usandoPrepago) {
+        if (wrapBanco) {
+          wrapBanco.style.display = 'none';
+          $('#pago-banco').required = false;
+          $('#pago-banco').value = '';
+        }
+        const prepInp = $('#pago-prepago-monto');
+        if (prepInp) {
+          $('#pago-monto').value = prepInp.value;
+        }
+      } else {
+        actualizarBanco();
+      }
+      badgeRest();
+    };
     const cargarCliente = async (c) => {
+      if (!$('#pago-monto')) return;
+      const cambioCliente = !cli || !c || cli.k_cliente !== c.k_cliente;
       cli = c;
-      if (!c) { facs = []; return renderFacs(); }
-      try { const d = await api('/api/cliente?' + qs({ k: c.k_cliente, corte: S.corte })); facs = d.abiertas.slice().sort((a, b) => fifoKey(a).localeCompare(fifoKey(b))); renderFacs(); }
-      catch (e) { toast(e.message, 'bad'); }
+      const confirmacion = $('#pago-confirmacion');
+      if (cambioCliente && confirmacion) {
+        confirmacion.hidden = true;
+        confirmacion.innerHTML = '';
+      }
+      if (!c) {
+        facs = [];
+        deudaTotal = 0;
+        $('#pago-monto').removeAttribute('max');
+        saldoPrepago = 0;
+        tienePrepago = false;
+        renderFacs();
+        renderPrepagoBox(0, false);
+        actualizarVisibilidad();
+        return;
+      }
+      try {
+        const [d, prepData] = await Promise.all([
+          api('/api/cliente?' + qs({ k: c.k_cliente, corte: S.corte })),
+          api('/api/prepago/saldo?' + qs({ k: c.k_cliente })).catch(() => ({ saldo_prepago: 0 })),
+        ]);
+        const pagoMonto = $('#pago-monto');
+        if (!pagoMonto) return;
+        facs = d.abiertas.slice().sort((a, b) => fifoKey(a).localeCompare(fifoKey(b)));
+        deudaTotal = facs.reduce((sum, f) => sum + Number(f.saldo || 0), 0);
+        pagoMonto.max = deudaTotal.toFixed(2);
+        saldoPrepago = prepData.saldo_prepago || 0;
+        tienePrepago = saldoPrepago > 0.005;
+        renderFacs();
+        renderPrepagoBox(saldoPrepago, tienePrepago);
+        actualizarVisibilidad();
+      } catch (e) { toast(e.message, 'bad'); }
     };
     setView(html`
-      <div class="h"><h2>Registro y Aplicación de Pagos CxC</h2><p>Aplica cobros a las facturas pendientes con el método FIFO (primero las más antiguas), o reparte el monto manualmente.</p></div>
+      <div class="h"><h2>Aplicación de Pagos</h2><p>Aplica cobros a las facturas pendientes con el método FIFO (primero las más antiguas), o reparte el monto manualmente.</p></div>
       <div class="split">
         <div class="formcard"><h3>Detalles del Cobro</h3><div class="f">
           <label>Cliente con deuda${pick.html}</label>
           <div class="row2"><label>Fecha pago<input id="pago-fecha" type="date" max="${hoyLocal()}" value="${hoyLocal()}"></label>
             <label>Ref / Folio<input id="pago-ref" maxlength="80" placeholder="SPEI-123"></label></div>
-          <label>Método<select id="pago-metodo">${S.cat.metodos_pago.map((m) => opt(m.nombre, m.nombre, 'Transferencia SPEI'))}</select></label>
+          <label id="pago-metodo-wrap">Método<select id="pago-metodo">${S.cat.metodos_pago.map((m) => opt(m.nombre, m.nombre, 'Transferencia SPEI'))}</select></label>
           <label id="pago-banco-wrap">Banco<select id="pago-banco"><option value="">Selecciona un banco…</option>${S.cat.bancos.map((b) => opt(b.id, b.nombre))}</select></label>
-          <label>Monto del pago ($)<input id="pago-monto" class="bigin" type="number" min="0.01" step="0.01" placeholder="0.00"></label>
-          <div class="err" id="pagoErr"></div>
+          <label id="pago-monto-wrap">Monto del pago ($)<input id="pago-monto" class="bigin" type="number" min="0.01" step="0.01" placeholder="0.00"></label>
+          <div id="pago-prepago-box" style="margin-top:6px;margin-bottom:6px"></div>
+          <div id="pago-confirmacion" class="note info" role="status" aria-live="polite" style="margin:8px 0" hidden></div>
+          <div class="err" id="pagoErr" role="alert" aria-live="assertive"></div>
           <button type="button" id="btn-fifo" class="btn gray block">Distribuir Automático (FIFO)</button>
           <button type="button" id="btn-sin-aplicar" class="btn gray block">Guardar monto total sin aplicar</button>
           <button type="button" id="btn-guardar" class="btn accent block">Guardar y Aplicar Pago</button></div></div>
-        <div><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0;color:#334155">Facturas Pendientes</h3><span class="chip warn" id="pago-restante">Sin distribuir: $0.00</span></div>
+        <div><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0;color:var(--txt)">Facturas Pendientes</h3><span class="chip warn" id="pago-restante">Sin distribuir: $0.00</span></div>
           <div class="tablewrap" style="max-height:480px"><table><thead><tr><th>Factura</th><th class="n">Monto original</th><th class="n">Saldo pendiente</th><th class="n">Asignar pago</th></tr></thead><tbody id="pagoFacs"></tbody></table></div></div>
       </div>`);
     renderFacs();
+    renderPrepagoBox(0, false);
     const actualizarBanco = () => {
-      const metodo = S.cat.metodos_pago.find((m) => m.nombre === $('#pago-metodo').value);
-      const requiere = !!(metodo && metodo.requiere_banco);
+      const metodoVal = ($('#pago-metodo').value || '').trim();
+      const metodo = S.cat.metodos_pago.find((m) => m.nombre === metodoVal);
+      const requiere = !!(
+        (metodo && metodo.requiere_banco) ||
+        /tarjeta|cheque|transferencia/i.test(metodoVal)
+      );
       $('#pago-banco-wrap').style.display = requiere ? '' : 'none';
       $('#pago-banco').required = requiere;
       if (!requiere) $('#pago-banco').value = '';
@@ -160,40 +317,94 @@
     actualizarBanco();
     const inp = $('#pago-cliente');
     inp.addEventListener('input', () => { const c = pick.resolver(); if (c) cargarCliente(c); else if (cli) cargarCliente(null); });
-    if (query.k) { const c = lista.find((x) => x.k_cliente === query.k); if (c) { inp.value = pick.etiqueta(c); cargarCliente(c); } }
+    if (query.k) {
+      const seleccionar = (cliente) => {
+        inp.value = pick.etiqueta(cliente);
+        pick.map.set(pick.etiqueta(cliente), cliente);
+        cargarCliente(cliente);
+      };
+      const c = lista.find((x) => x.k_cliente === query.k);
+      if (c) {
+        seleccionar(c);
+      } else {
+        api('/api/cliente?' + qs({ k: query.k, corte: S.corte })).then((d) => {
+          if (d && d.cliente) {
+            seleccionar({ k_cliente: d.cliente.k_cliente, cliente: d.cliente.cliente, estacion_id: d.cliente.estacion_id, estacion: d.cliente.estacion });
+          }
+        }).catch(() => {});
+      }
+    }
     $('#pago-monto').addEventListener('input', badgeRest);
     $('#pagoFacs').addEventListener('input', (e) => { if (e.target.classList.contains('input-aplicar')) badgeRest(); });
     $('#btn-fifo').onclick = () => {
       let rest = monto();
       if (!(rest > 0)) { toast('Captura primero el monto del pago.', 'warn'); return; }
-      $$inputs().forEach((i) => { const pend = parseFloat(i.dataset.pending) || 0; if (rest > 0.004) { const x = Math.min(pend, rest); i.value = x.toFixed(2); rest -= x; } else i.value = ''; });
-      badgeRest();
+      distribuirFIFO(rest);
     };
     $('#btn-sin-aplicar').onclick = async () => {
       $('#pagoErr').textContent = '';
       if (!cli) { $('#pagoErr').textContent = 'Selecciona un cliente de la lista.'; return; }
+      const chk = $('#pago-usar-prepago');
+      if (tienePrepago && chk && chk.checked) {
+        $('#pagoErr').textContent = 'El saldo de prepago ya está a favor del cliente. Asígnalo a las facturas pendientes.';
+        return;
+      }
       const total = monto(); if (!(total > 0)) { $('#pagoErr').textContent = 'Captura el monto del pago.'; return; }
+      if (total > deudaTotal + 0.005) { validarMontos(); return; }
       const btn = $('#btn-sin-aplicar'); btn.disabled = true;
       try {
         const r = await api('/api/pagos/lote', { method: 'POST', body: { k_cliente: cli.k_cliente, estacion_id: cli.estacion_id, fecha: $('#pago-fecha').value, metodo: $('#pago-metodo').value, banco_id: $('#pago-banco').value || null, referencia: $('#pago-ref').value, monto: total, aplicaciones: [], corte: S.corte } });
         toast(`Cobro guardado por ${money(r.total, 2)} sin aplicar a ninguna factura.`, 'warn');
         $('#pago-monto').value = ''; $('#pago-ref').value = ''; $$inputs().forEach((i) => i.value = ''); badgeRest(); await cargarCliente(cli); CG.refreshKpis();
-      } catch (er) { $('#pagoErr').textContent = er.message; } finally { btn.disabled = false; }
+      } catch (er) { $('#pagoErr').textContent = er.message; } finally { badgeRest(); }
     };
     $('#btn-guardar').onclick = async () => {
       $('#pagoErr').textContent = '';
       if (!cli) { $('#pagoErr').textContent = 'Selecciona un cliente de la lista.'; return; }
-      const total = monto(); if (!(total > 0)) { $('#pagoErr').textContent = 'Captura el monto del pago.'; return; }
+      const chk = $('#pago-usar-prepago');
+      const usarPrepago = tienePrepago && chk && chk.checked;
+      const montoPrep = usarPrepago ? parseFloat($('#pago-prepago-monto')?.value) || 0 : 0;
+      if (usarPrepago && !(montoPrep > 0)) { $('#pagoErr').textContent = 'Indica un monto de prepago mayor a cero.'; return; }
+      if (usarPrepago && montoPrep > saldoPrepago + 0.005) { $('#pagoErr').textContent = `El monto excede el saldo de prepago disponible (${money(saldoPrepago, 2)})`; return; }
+
+      const total = usarPrepago ? montoPrep : monto();
+      if (!(total > 0)) { $('#pagoErr').textContent = 'Captura el monto del pago.'; return; }
+      if (!validarMontos()) return;
       const aplicaciones = $$inputs().map((i) => ({ no_factura: i.dataset.no, estacion_id: i.dataset.est, monto: parseFloat(i.value) || 0 })).filter((a) => a.monto > 0);
       const ap = aplicaciones.reduce((s, a) => s + a.monto, 0);
       if (ap > total + 0.01) { $('#pagoErr').textContent = 'El monto aplicado supera el monto del pago.'; return; }
+      if (usarPrepago && !aplicaciones.length) { $('#pagoErr').textContent = 'Asigna al menos una factura para aplicar el saldo de prepago.'; return; }
+      if (usarPrepago && Math.abs(ap - montoPrep) > 0.005) { $('#pagoErr').textContent = 'Distribuye el monto completo de prepago entre las facturas, con FIFO o asignación manual.'; return; }
+
       const btn = $('#btn-guardar'); btn.disabled = true;
       try {
-        const r = await api('/api/pagos/lote', { method: 'POST', body: { k_cliente: cli.k_cliente, fecha: $('#pago-fecha').value, metodo: $('#pago-metodo').value, banco_id: $('#pago-banco').value || null, referencia: $('#pago-ref').value, monto: total, aplicaciones, corte: S.corte } });
+        const body = {
+          k_cliente: cli.k_cliente,
+          fecha: $('#pago-fecha').value,
+          metodo: usarPrepago ? 'Prepago' : $('#pago-metodo').value,
+          banco_id: usarPrepago ? null : ($('#pago-banco').value || null),
+          referencia: $('#pago-ref').value,
+          monto: total,
+          aplicaciones,
+          corte: S.corte,
+        };
+        if (usarPrepago) {
+          body.desde_prepago = montoPrep;
+        }
+        const r = await api('/api/pagos/lote', { method: 'POST', body });
         const sobra = Math.round((total - r.aplicado) * 100) / 100;
-        toast(`Cobro aplicado: ${money(r.aplicado, 2)} en ${Math.max(0, r.ids.length - Number(Boolean(r.sin_aplicar > 0)))} factura(s).${sobra > 0.005 ? ' Quedaron ' + money(sobra, 2) + ' sin aplicar.' : ''}`, sobra > 0.005 ? 'warn' : undefined);
+        if (usarPrepago) {
+          const confirmacion = $('#pago-confirmacion');
+          confirmacion.innerHTML = html`
+            <b>Aplicación de prepago registrada.</b>
+            <div>Aplicado a facturas: <b>${money(r.aplicado, 2)}</b></div>
+            <div>Saldo de prepago remanente: <b>${money(r.prepago_saldo_remanente, 2)}</b></div>`.s;
+          confirmacion.hidden = false;
+        } else {
+          toast(`Cobro aplicado: ${money(r.aplicado, 2)} en ${Math.max(0, r.ids.length - Number(Boolean(r.sin_aplicar > 0)))} factura(s).${sobra > 0.005 ? ' Quedaron ' + money(sobra, 2) + ' sin aplicar.' : ''}`, sobra > 0.005 ? 'warn' : undefined);
+        }
         $('#pago-monto').value = ''; $('#pago-ref').value = ''; $$inputs().forEach((i) => i.value = ''); badgeRest(); await cargarCliente(cli); CG.refreshKpis();
-      } catch (er) { $('#pagoErr').textContent = er.message; } finally { btn.disabled = false; }
+      } catch (er) { $('#pagoErr').textContent = er.message; } finally { badgeRest(); }
     };
   };
 
@@ -216,19 +427,49 @@
       } catch (e) { $('#tbl').innerHTML = html`<div class="note">${e.message}</div>`.s; }
     };
     setView(html`<div class="h"><h2>Despachos por Facturar</h2><p>Despachos a crédito que aún no tienen factura emitida. También puedes registrar un monto de crédito pendiente para un cliente concreto.</p></div>
+      ${can('facturas') ? html`<form id="formCargaPorFacturar" class="formcard" style="margin-bottom:18px">
+        <h3>Cargar Despachos por facturar</h3>
+        <div class="row2" style="align-items:end">
+          <label>Archivo de Excel (.xlsx)<input type="file" name="archivo" accept=".xlsx" required></label>
+          <button class="btn accent" type="submit">Cargar Despachos por facturar</button>
+        </div>
+        <div id="cargaPorFacturarOut" role="status" aria-live="polite" style="margin-top:10px"></div>
+      </form>` : ''}
       ${can('facturas') ? html`<form id="formPorFacturar" class="formcard" style="margin-bottom:18px">
         <h3>Registrar monto pendiente por facturar</h3>
         <div class="grid g4">
           <label>Cliente${pick.html}</label>
           <label>Monto ($)<input name="importe" type="number" min="0.01" step="0.01" required></label>
           <label>Fecha de despacho<input name="fecha_despacho" type="date" max="${hoyLocal()}" value="${hoyLocal()}" required></label>
-          <label>Descripción<input name="despacho" maxlength="80" placeholder="Ej. Entrega 12/10"></label>
+          <label>Despacho<input name="despacho" maxlength="80" placeholder="Ej. Entrega 12/10"></label>
         </div>
         <div class="err" id="porFacturarErr" style="margin-top:8px"></div>
         <button class="btn dark" type="submit" style="margin-top:12px">Guardar por facturar</button>
       </form>` : ''}
       <div class="bar" id="filtros"><label>Buscar cliente<input data-f="q" placeholder="Nombre…" style="min-width:240px"></label></div><div id="tbl"></div>`);
     if (can('facturas')) {
+      $('#formCargaPorFacturar').onsubmit = async (e) => {
+        e.preventDefault();
+        const form = e.currentTarget;
+        const file = form.elements.archivo.files[0];
+        const output = $('#cargaPorFacturarOut');
+        if (!file) { output.innerHTML = html`<div class="note">Selecciona un archivo Excel .xlsx.</div>`.s; return; }
+        if (!/\.xlsx$/i.test(file.name)) { output.innerHTML = html`<div class="note">Solo se aceptan archivos .xlsx.</div>`.s; return; }
+        const btn = form.querySelector('button[type="submit"]');
+        btn.disabled = true;
+        output.innerHTML = html`<div class="note info">Validando el archivo y sus registros…</div>`.s;
+        try {
+          const r = await api('/api/por-facturar/carga', { method: 'POST', raw: file, headers: { 'Content-Type': 'application/octet-stream' } });
+          output.innerHTML = html`<div class="note" style="background:var(--okbg);color:var(--oktext)">Se cargaron ${int(r.importados)} despacho(s) por un pendiente total de ${money(r.total, 2)}.</div>`.s;
+          form.reset();
+          st.q = '';
+          const filtroCliente = $('#filtros [data-f="q"]');
+          if (filtroCliente) filtroCliente.value = '';
+          await load();
+        } catch (err) {
+          output.innerHTML = html`<div class="note" style="white-space:pre-wrap">${err.message}</div>`.s;
+        } finally { btn.disabled = false; }
+      };
       $('#formPorFacturar').onsubmit = async (e) => {
         e.preventDefault();
         const form = e.currentTarget;
@@ -307,7 +548,7 @@
     try {
       if (cobTab === 'gestiones') {
         const g = await api('/api/gestiones?' + qs({ estacion: S.est }));
-        setView(html`<div class="h"><h2>Cobranza</h2><p>Seguimiento de gestiones y promesas de pago. Las gestiones se registran desde la ficha de cada cliente.</p></div>${tabsCob()}
+        setView(html`<div class="h"><h2>Reporte de Cobranza</h2><p>Seguimiento de gestiones y promesas de pago. Las gestiones se registran desde la ficha de cada cliente.</p></div>${tabsCob()}
           <div class="tablewrap"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Tipo</th><th>Resultado</th><th>Promesa</th><th>Estado</th><th>Notas</th><th>Usuario</th></tr></thead><tbody>
           ${g.rows.length ? g.rows.map((x) => html`<tr><td>${fdate(x.fecha)}</td><td class="wrap"><a href="#/cliente/${encodeURIComponent(x.k_cliente)}">${x.cliente}</a></td><td>${x.tipo}</td><td>${x.resultado}</td>
             <td>${x.promesa_fecha ? html`${fdate(x.promesa_fecha)} ${x.promesa_monto ? money(x.promesa_monto) : ''}` : ''}</td>
@@ -315,7 +556,7 @@
             <td class="wrap">${x.notas}</td><td>${x.usuario}</td></tr>`) : html`<tr><td colspan="8" class="empty">Sin gestiones registradas.</td></tr>`}</tbody></table></div>`);
       } else {
         const p = await api('/api/pagos?' + qs({ estacion: S.est }));
-        setView(html`<div class="h"><h2>Cobranza</h2><p>Pagos capturados en la aplicación. Los cobros que aún no se asignan a factura aparecen como <b>Sin aplicar</b>. Al importar un Excel nuevo se marcan como <b>conciliados</b> (ya vienen incluidos en el archivo).</p></div>${tabsCob()}
+        setView(html`<div class="h"><h2>Reporte de Cobranza</h2><p>Pagos capturados en la aplicación. Los cobros que aún no se asignan a factura aparecen como <b>Sin aplicar</b>. Al importar un Excel nuevo se marcan como <b>conciliados</b> (ya vienen incluidos en el archivo).</p></div>${tabsCob()}
           <div class="tablewrap"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Estación</th><th>Factura</th><th>Método</th><th>Banco</th><th>Referencia</th><th class="n">Monto</th><th>Registró</th><th>Estado</th><th></th></tr></thead><tbody>
           ${p.rows.length ? p.rows.map((x) => html`<tr><td>${fdate(x.fecha)}</td><td class="wrap"><a href="#/cliente/${encodeURIComponent(x.k_cliente)}">${x.cliente}</a></td><td>${corto(x.estacion)}</td><td>${x.sin_aplicar ? html`<span class="badge b-warn">Sin aplicar</span>` : x.no_factura}</td><td>${x.metodo}</td>
             <td>${x.banco || ''}</td><td>${x.referencia}</td><td class="n strong">${money(x.monto, 2)}</td><td>${x.usuario}</td><td>${x.anulado ? badge('Cerrada') : x.conciliado ? html`<span class="badge b-mut">Conciliado</span>` : x.sin_aplicar ? html`<span class="badge b-warn">Pendiente de asignar</span>` : html`<span class="badge b-ok">Aplicado</span>`}</td>
@@ -384,7 +625,7 @@
     };
   };
   const mostrarPassword = (titulo, usuario, pw) => modal(html`<h2>${titulo}</h2><p>Usuario: <b>${usuario}</b></p>
-    <p>Contraseña temporal: <code style="font-size:18px;background:#fef3c7;padding:4px 10px;border-radius:6px;user-select:all">${pw}</code></p>
+    <p>Contraseña temporal: <code style="font-size:18px;background:var(--warnbg);padding:4px 10px;border-radius:6px;user-select:all">${pw}</code></p>
     <div class="note">Cópiala y compártela de forma segura. No se volverá a mostrar y el usuario deberá cambiarla en su primer acceso.</div>
     <div class="actions"><button class="btn accent" data-act="cerrar">Listo</button></div>`);
   CG.acts.editUsuario = (el) => {
@@ -473,7 +714,7 @@
       try {
         const query = new URLSearchParams({ modo, ...(modo === 'parcial' ? { modulos: modulos.join(',') } : {}) });
         const r = await api('/api/carga?' + query, { method: 'POST', raw: file, headers: { 'Content-Type': 'application/octet-stream' } });
-        $('#cargaOut').innerHTML = html`<div class="note" style="background:#d1fae5;color:#065f46">✔ Datos importados correctamente.<br><small>${r.resumen}<br>Respaldo previo: ${r.respaldo}</small></div>`.s;
+        $('#cargaOut').innerHTML = html`<div class="note" style="background:var(--okbg);color:var(--oktext)">✔ Datos importados correctamente.<br><small>${r.resumen}<br>Respaldo previo: ${r.respaldo}</small></div>`.s;
         toast('Datos importados exitosamente.');
         if (r.modo === 'completa') {
           CG.onLogout();

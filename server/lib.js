@@ -25,11 +25,16 @@ for (const [table, column, definition] of [
   ['cliente_extra', 'email', 'TEXT'],
   ['cliente_extra', 'telefono', 'TEXT'],
   ['cliente_extra', 'editado_app', 'INTEGER NOT NULL DEFAULT 0'],
+  ['pagos', 'desde_prepago', 'INTEGER NOT NULL DEFAULT 0'],
+  ['pagos', 'prepago_ref_id', 'INTEGER'],
 ]) {
   if (!db.prepare(`PRAGMA table_info(${table})`).all().some((entry) => entry.name === column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 }
+try {
+  db.exec("UPDATE metodos_pago SET requiere_banco=1 WHERE nombre='Tarjeta';");
+} catch { /* tabla aun no inicializada */ }
 
 const q = {
   all: (sql, ...p) => db.prepare(sql).all(...p),

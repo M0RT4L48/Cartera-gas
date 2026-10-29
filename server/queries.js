@@ -8,6 +8,32 @@ const RANGOS = ['No Vencido', '1-15 días', '16-30 días', '31-60 días', '61-90
 const corteDefault = () => (q.get("SELECT valor FROM meta WHERE clave='fecha_corte'") || {}).valor || new Date().toISOString().slice(0, 10);
 const corteValido = (c) => (esFecha(c) ? c : corteDefault());
 
+function FACTURAS() {
+  return `(SELECT k_cliente, estacion_id, no_factura, MIN(fecha_factura) fecha_factura,
+      MIN(fecha_vencimiento) fecha_vencimiento, MIN(primer_despacho) primer_despacho,
+      MAX(ultimo_despacho) ultimo_despacho, SUM(despachos) despachos, SUM(importe) importe,
+      SUM(abono) abono, MAX(abierta) abierta, MIN(editable) editable, MIN(app_id) app_id
+    FROM (
+      SELECT k_cliente, estacion_id, no_factura, fecha_factura, fecha_vencimiento, primer_despacho,
+        ultimo_despacho, despachos, importe, abono, abierta, 0 editable, NULL app_id
+      FROM fact_factura
+      UNION ALL
+      SELECT f.k_cliente, f.estacion_id, f.no_factura, MIN(f.fecha_factura), MIN(f.fecha_vencimiento),
+        MIN(f.fecha_despacho), MAX(f.fecha_despacho), COUNT(*), SUM(f.importe), SUM(f.abono),
+        MAX(CASE WHEN f.estatus IN ('POR PAGAR','ABONADO') THEN 1 ELSE 0 END), 0, NULL
+      FROM fact_cxc f WHERE f.no_factura IS NOT NULL AND f.estatus<>'POR FACTURAR'
+        AND NOT EXISTS (SELECT 1 FROM fact_factura x WHERE x.k_cliente=f.k_cliente
+          AND x.estacion_id=f.estacion_id AND x.no_factura=f.no_factura)
+      GROUP BY f.k_cliente, f.estacion_id, f.no_factura
+      UNION ALL
+      SELECT k_cliente, estacion_id, no_factura, MIN(fecha_factura), MIN(fecha_vencimiento),
+        MIN(fecha_despacho), MAX(fecha_despacho), COUNT(*), SUM(importe), SUM(abono),
+        MAX(CASE WHEN estatus IN ('POR PAGAR','ABONADO') THEN 1 ELSE 0 END), 1, MIN(id)
+      FROM fact_cxc_app WHERE no_factura IS NOT NULL AND estatus<>'POR FACTURAR'
+      GROUP BY k_cliente, estacion_id, no_factura
+    ) f GROUP BY k_cliente, estacion_id, no_factura)`;
+}
+
 // Facturas con saldo neto de pagos capturados en la app y dias vencido a la fecha de corte
 function FAC(corte) {
   return `(SELECT f.k_cliente, f.estacion_id, f.no_factura, f.fecha_factura,
@@ -21,7 +47,7 @@ function FAC(corte) {
            ELSE CAST(julianday('${corte}')-julianday(CASE WHEN f.fecha_factura IS NOT NULL
              THEN date(f.fecha_factura, printf('%+d days', COALESCE(cr.dias,0)))
              ELSE f.fecha_vencimiento END) AS INTEGER) END AS dias_vencido
-    FROM v_fact_factura f
+    FROM ${FACTURAS()} f
     LEFT JOIN credito cr ON cr.k_cliente=f.k_cliente
     LEFT JOIN (SELECT k_cliente,estacion_id,no_factura,SUM(monto) pagos FROM pagos
                WHERE anulado=0 AND conciliado=0 GROUP BY 1,2,3) p
@@ -68,7 +94,7 @@ function catalogos() {
     fecha_corte: corteDefault(),
     fuente: (q.get("SELECT valor FROM meta WHERE clave='fuente'") || {}).valor || null,
     importado_en: (q.get("SELECT valor FROM meta WHERE clave='importado_en'") || {}).valor || null,
-    anios: q.all(`SELECT DISTINCT t.anio FROM v_fact_factura f JOIN dim_tiempo t ON t.fecha=f.fecha_factura ORDER BY 1 DESC`).map((r) => r.anio),
+    anios: q.all(`SELECT DISTINCT t.anio FROM ${FACTURAS()} f JOIN dim_tiempo t ON t.fecha=f.fecha_factura ORDER BY 1 DESC`).map((r) => r.anio),
     meses: ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'],
     rangos: RANGOS,
   };
@@ -98,9 +124,11 @@ function dashboard({ corte, est }) {
   const pf = q.get(`SELECT COALESCE(SUM(importe-abono),0) monto, COUNT(*) n FROM v_cxc f WHERE estatus='POR FACTURAR'${ew}`, ...ep);
   const fav = q.get(`SELECT COALESCE(SUM(s),0) a_favor, COUNT(*) n FROM
       (SELECT SUM(abono)-SUM(importe) s FROM v_debito f WHERE 1=1${ew} GROUP BY k_cliente HAVING s>${EPS})`, ...ep);
-  const exc = q.get(`SELECT COUNT(*) n, COALESCE(SUM(saldo_total-limite),0) monto FROM ${CLIENTES(corte)} x
-      WHERE x.limite>0 AND x.saldo_total>x.limite${est ? ' AND x.estacion_id=?' : ''}`, ...ep);
-  const sl = q.get(`SELECT COUNT(*) n FROM ${CLIENTES(corte)} x WHERE x.limite=0 AND x.saldo_total>${EPS}${est ? ' AND x.estacion_id=?' : ''}`, ...ep);
+  const riesgo = q.get(`SELECT
+      SUM(CASE WHEN x.limite>0 AND x.saldo_total>x.limite THEN 1 ELSE 0 END) excedidos,
+      COALESCE(SUM(CASE WHEN x.limite>0 AND x.saldo_total>x.limite THEN x.saldo_total-x.limite ELSE 0 END),0) exceso_monto,
+      SUM(CASE WHEN x.limite=0 AND x.saldo_total>${EPS} THEN 1 ELSE 0 END) sin_limite
+    FROM ${CLIENTES(corte)} x${est ? ' WHERE x.estacion_id=?' : ''}`, ...ep);
 
   const aging = q.all(`SELECT ${RANGO_SQL()} rango, COALESCE(SUM(saldo),0) monto, COUNT(*) facturas
     FROM ${F} f WHERE f.abierta=1 AND f.saldo>${EPS}${ew} GROUP BY 1`, ...ep);
@@ -135,7 +163,8 @@ function dashboard({ corte, est }) {
       cartera_total: k.facturada + pf.monto, facturada: k.facturada, vencida: k.vencida, por_vencer: k.por_vencer, mayor_60: k.mayor_60,
       pct_vencida: k.facturada > 0 ? k.vencida / k.facturada : 0, por_facturar: pf.monto, despachos_por_facturar: pf.n,
       facturas_abiertas: k.facturas, clientes_con_saldo: k.clientes, saldo_a_favor: fav.a_favor, clientes_a_favor: fav.n,
-      excedidos: exc.n, exceso_monto: exc.monto, sin_limite: sl.n, promesas_vencidas: prom.n, promesas_monto: prom.monto,
+      excedidos: riesgo.excedidos || 0, exceso_monto: riesgo.exceso_monto, sin_limite: riesgo.sin_limite || 0,
+      promesas_vencidas: prom.n, promesas_monto: prom.monto,
     },
     aging: agingOut, por_estacion: porEstacion, tendencia,
   };
@@ -213,12 +242,12 @@ function clientes(p) {
   const size = p.todo ? 50000 : entero(p.size, 50, 10, 200);
   const page = entero(p.page, 1, 1, 100000);
   const tot = q.get(`SELECT COUNT(*) n, COALESCE(SUM(x.saldo_total),0) saldo, COALESCE(SUM(x.vencido),0) vencido ${from}`, ...pr);
-  const rows = q.all(`SELECT x.*, x.limite-x.saldo_total disponible, CASE WHEN x.limite>0 THEN x.saldo_total/x.limite END uso, ${RIESGO('x')} riesgo
+  const rows = q.all(`SELECT x.*, x.saldo_favor+x.limite-x.saldo_total disponible, CASE WHEN x.limite>0 THEN x.saldo_total/x.limite END uso, ${RIESGO('x')} riesgo
     ${from} ORDER BY ${orden} LIMIT ? OFFSET ?`, ...pr, size, (page - 1) * size);
   return { total: tot.n, suma_saldo: tot.saldo, suma_vencido: tot.vencido, page, size, rows };
 }
 function clienteDetalle({ corte, k }) {
-  const c = q.get(`SELECT x.*, x.limite-x.saldo_total disponible, CASE WHEN x.limite>0 THEN x.saldo_total/x.limite END uso,
+  const c = q.get(`SELECT x.*, x.saldo_favor+x.limite-x.saldo_total disponible, CASE WHEN x.limite>0 THEN x.saldo_total/x.limite END uso,
       ${RIESGO('x')} riesgo FROM ${CLIENTES(corte)} x WHERE x.k_cliente=?`, k);
   if (!c) throw new HttpError(404, 'Cliente no encontrado');
   const cred = q.get('SELECT origen, actualizado_por, actualizado FROM credito WHERE k_cliente=?', k) || {};
@@ -337,5 +366,69 @@ function alertas({ corte, est }) {
   return { corte, excedidos, sin_limite: sinLimite, vencidas_60: vencidas60, proximas: prox, sin_vencimiento: sinVenc, promesas, por_facturar_antiguo: pf };
 }
 
+function estadoCuenta({ k, desde = '', hasta = '' }) {
+  const rows = q.all(`SELECT * FROM (
+      SELECT f.fecha_despacho fecha,
+        CASE WHEN f.estatus='POR FACTURAR' THEN 'Despacho por facturar' ELSE 'Detalle de despacho' END tipo,
+        COALESCE(f.despacho,'') referencia, f.despacho, COALESCE(f.no_factura,'') factura, COALESCE(f.grupo,'') grupo,
+        'Detalle de despacho' concepto,
+        CASE WHEN f.estatus='POR FACTURAR' THEN f.importe ELSE 0 END cargo_cxc,
+        0 abono_cxc, 0 abono_prepago, 0 consumo_prepago, f.importe importe_referencia,
+        f.estatus estado, f.origen, '' usuario, 0 orden
+      FROM v_cxc f WHERE f.k_cliente=? AND f.fecha_despacho IS NOT NULL
+      UNION ALL
+      SELECT COALESCE(f.fecha_factura,f.primer_despacho), 'Factura', f.no_factura, '', f.no_factura, '',
+        'Factura con ' || f.despachos || ' despacho(s)', f.importe, 0, 0, 0, f.importe,
+        'Registrada', 'Excel/App', '', 1
+      FROM ${FACTURAS()} f WHERE f.k_cliente=?
+      UNION ALL
+      SELECT COALESCE(f.fecha_pago,f.fecha_factura,f.fecha_despacho), 'Abono CxC',
+        COALESCE(f.no_factura,f.despacho,''), f.despacho, COALESCE(f.no_factura,''), COALESCE(f.grupo,''),
+        CASE WHEN f.fecha_pago IS NULL THEN 'Abono; fecha de pago no informada' ELSE 'Abono registrado' END,
+        0, f.abono, 0, 0, f.abono, CASE WHEN f.origen='app' THEN 'Capturado' ELSE 'Importado' END,
+        CASE WHEN f.origen='app' THEN 'App' ELSE 'Excel' END, '', 2
+      FROM v_cxc f WHERE f.k_cliente=? AND f.abono>0
+      UNION ALL
+      SELECT p.fecha, CASE WHEN p.sin_aplicar=1 THEN 'Cobro sin aplicar' ELSE 'Pago CxC' END,
+        COALESCE(p.referencia,p.no_factura,''), '', COALESCE(p.no_factura,''), '',
+        TRIM(COALESCE(p.metodo,'') || CASE WHEN p.banco IS NOT NULL AND p.banco<>'' THEN ' · ' || p.banco ELSE '' END),
+        0, CASE WHEN p.anulado=0 AND p.conciliado=0 AND p.sin_aplicar=0 THEN p.monto ELSE 0 END,
+        0, 0, p.monto,
+        CASE WHEN p.anulado=1 THEN 'Anulado' WHEN p.conciliado=1 THEN 'Conciliado en Excel' WHEN p.sin_aplicar=1 THEN 'Pendiente de asignar' ELSE 'Aplicado' END,
+        'App', COALESCE(u.nombre,''), 3
+      FROM pagos p LEFT JOIN usuarios u ON u.id=p.usuario_id WHERE p.k_cliente=?
+      UNION ALL
+      SELECT d.fecha, CASE WHEN d.abono>0 THEN 'Abono prepago' ELSE 'Consumo prepago' END,
+        COALESCE(d.folio,''), COALESCE(d.folio,''), '', COALESCE(d.grupo,''), d.tipo,
+        0, 0, d.abono, d.importe, CASE WHEN d.abono>0 THEN d.abono ELSE d.importe END,
+        CASE WHEN d.origen='app' THEN 'Registrado' ELSE 'Importado' END, d.origen, COALESCE(u.nombre,''), 4
+      FROM v_debito d LEFT JOIN debito_app da ON d.origen='app' AND d.id=1000000000+da.id
+      LEFT JOIN usuarios u ON u.id=da.usuario_id WHERE d.k_cliente=?
+      UNION ALL
+      SELECT g.fecha, 'Gestión', g.tipo, '', '', '', COALESCE(g.resultado,'') || CASE WHEN g.notas IS NOT NULL AND g.notas<>'' THEN ' · ' || g.notas ELSE '' END,
+        0, 0, 0, 0, 0, COALESCE(g.estado,''), 'App', COALESCE(u.nombre,''), 5
+      FROM gestiones g LEFT JOIN usuarios u ON u.id=g.usuario_id WHERE g.k_cliente=?
+    ) movimientos
+    WHERE fecha IS NOT NULL AND (?='' OR fecha<=?)
+    ORDER BY fecha, orden, referencia`, k, k, k, k, k, k, hasta, hasta);
+
+  let saldoCxc = 0, saldoPrepago = 0;
+  const conSaldos = rows.map((row) => {
+    saldoCxc = Math.round((saldoCxc + Number(row.cargo_cxc || 0) - Number(row.abono_cxc || 0)) * 100) / 100;
+    saldoPrepago = Math.round((saldoPrepago + Number(row.abono_prepago || 0) - Number(row.consumo_prepago || 0)) * 100) / 100;
+    return { ...row, saldo_cxc: saldoCxc, saldo_prepago: saldoPrepago };
+  });
+  const filtradas = conSaldos.filter((row) => !desde || row.fecha >= desde);
+  if (desde) {
+    const previo = conSaldos.filter((row) => row.fecha < desde).at(-1);
+    filtradas.unshift({
+      fecha: desde, tipo: 'Saldo inicial', referencia: '', despacho: '', factura: '', grupo: '', concepto: 'Saldo al inicio del período',
+      cargo_cxc: 0, abono_cxc: 0, abono_prepago: 0, consumo_prepago: 0, importe_referencia: 0,
+      estado: '', origen: '', usuario: '', saldo_cxc: previo ? previo.saldo_cxc : 0, saldo_prepago: previo ? previo.saldo_prepago : 0,
+    });
+  }
+  return filtradas;
+}
+
 module.exports = { listaClientes, corteDefault, corteValido, catalogos, dashboard, facturas, facturaDetalle, clientes, clienteDetalle,
-  porFacturar, debitoResumen, debitoMovs, saldoDebito, alertas, FAC, EPS, RANGOS };
+  porFacturar, debitoResumen, debitoMovs, saldoDebito, alertas, estadoCuenta, FAC, EPS, RANGOS };

@@ -6,6 +6,7 @@ const tmp = path.join(os.tmpdir(), `cartera_test_${process.pid}.db`);
 fs.copyFileSync(src, tmp);
 process.env.DB_PATH = tmp; process.env.ADMIN_PASSWORD = 'Inicial123';
 const L = require('./lib'); const { server } = require('./index');
+L.q.run("UPDATE usuarios SET pass_hash=?, must_change=1 WHERE usuario='admin'", L.hashPassword('Inicial123'));
 assert.equal(L.sembrarAdmin(), null, 'La contraseña configurada del administrador no se devuelve para imprimirla en logs');
 const XLSX = process.env.XLSX_PRUEBA || '/mnt/user-data/uploads/Gas_App.xlsx';
 
@@ -127,6 +128,10 @@ server.listen(0, '127.0.0.1', async () => {
   });
   await t('pagos: validaciones (excedente, fecha futura, vacío, duplicado)', async () => {
     const f = facs[0]; const b = { k_cliente: cliPagos.k_cliente, fecha: '2026-10-20', metodo: 'Efectivo' };
+    const deudaActual = (await detalle()).abiertas.reduce((sum, factura) => sum + factura.saldo, 0);
+    const pagoExcedido = await call('a', 'POST', '/api/pagos/lote', { ...b, monto: deudaActual + 1, aplicaciones: [], corte: '2026-10-13' });
+    assert.equal(pagoExcedido.status, 400);
+    assert.match(pagoExcedido.data.error, /No se puede exceder la deuda actual/);
     assert.equal((await call('a', 'POST', '/api/pagos', { ...b, metodo: 'Cheque', estacion_id: f.estacion_id, no_factura: f.no_factura, monto: 1 })).status, 400);
     assert.equal((await call('a', 'POST', '/api/pagos', { ...b, estacion_id: f.estacion_id, no_factura: f.no_factura, monto: 1e9 })).status, 400);
     assert.equal((await call('a', 'POST', '/api/pagos', { ...b, fecha: '2099-01-01', estacion_id: f.estacion_id, no_factura: f.no_factura, monto: 1 })).status, 400);
@@ -173,6 +178,79 @@ server.listen(0, '127.0.0.1', async () => {
     assert.ok(fd.data.pagos.some((p) => p.referencia === 'SPEI-1' && p.banco === 'BBVA'));
     assert.ok(Math.abs((dash.kpis.facturada - (await call('a', 'GET', '/api/dashboard?corte=2026-10-13')).data.kpis.facturada) - (a1 + a2)) < 0.01);
     for (const id of r.data.ids) await call('a', 'DELETE', '/api/pagos/' + id);
+  });
+  await t('estado de cuenta: incluye movimientos y filtra fechas con saldo inicial', async () => {
+    const alta = await call('a', 'POST', '/api/clientes', { cliente: `Estado Cuenta ${process.pid}`, estacion_id: 1, limite: 0, dias: 0 });
+    assert.equal(alta.status, 201, JSON.stringify(alta.data));
+    const k = alta.data.k_cliente;
+    const despacho = await call('a', 'POST', '/api/por-facturar', {
+      k_cliente: k, importe: 75, fecha_despacho: '2026-10-20', despacho: 'DESPACHO-ESTADO-CTA',
+    });
+    assert.equal(despacho.status, 201, JSON.stringify(despacho.data));
+    const factura = await call('a', 'POST', '/api/cartera/facturas', {
+      k_cliente: k, no_factura: 'FACTURA-ESTADO-CTA', importe: 250, fecha_factura: '2026-10-22',
+    });
+    assert.equal(factura.status, 201, JSON.stringify(factura.data));
+    const recarga = await call('a', 'POST', '/api/debito/movimientos', {
+      k_cliente: k, tipo: 'ABONO', monto: 300, fecha: '2026-10-21', folio: 'RECARGA-ESTADO-CTA',
+      banco_id: bancoId, metodo: 'Transferencia SPEI',
+    });
+    assert.equal(recarga.status, 201, JSON.stringify(recarga.data));
+    const pago = await call('a', 'POST', '/api/pagos', {
+      k_cliente: k, estacion_id: 1, no_factura: 'FACTURA-ESTADO-CTA', monto: 100, fecha: '2026-10-22', metodo: 'Efectivo',
+    });
+    assert.equal(pago.status, 201, JSON.stringify(pago.data));
+    const consumo = await call('a', 'POST', '/api/debito/movimientos', {
+      k_cliente: k, tipo: 'CONSUMO', monto: 50, fecha: '2026-10-23', folio: 'CONSUMO-ESTADO-CTA',
+    });
+    assert.equal(consumo.status, 201, JSON.stringify(consumo.data));
+
+    const ruta = '/api/cliente/estado-cuenta?k=' + enc(k);
+    const completo = await call('a', 'GET', ruta);
+    assert.equal(completo.status, 200);
+    for (const movimiento of ['DESPACHO-ESTADO-CTA', 'FACTURA-ESTADO-CTA', 'Pago CxC', 'RECARGA-ESTADO-CTA', 'CONSUMO-ESTADO-CTA'])
+      assert.ok(completo.data.includes(movimiento), `No aparece ${movimiento} en el CSV`);
+
+    const periodo = await call('a', 'GET', ruta + '&desde=2026-10-22&hasta=2026-10-22');
+    assert.equal(periodo.status, 200);
+    assert.ok(periodo.data.includes('Saldo al inicio del período'));
+    assert.ok(periodo.data.includes('FACTURA-ESTADO-CTA') && periodo.data.includes('Pago CxC'));
+    assert.ok(!periodo.data.includes('DESPACHO-ESTADO-CTA') && !periodo.data.includes('RECARGA-ESTADO-CTA') && !periodo.data.includes('CONSUMO-ESTADO-CTA'));
+    assert.equal((await call('a', 'GET', ruta + '&desde=2026-10-23&hasta=2026-10-22')).status, 400);
+    assert.ok((await call('a', 'GET', '/api/bitacora')).data.rows.some((row) => row.accion === 'EXPORT' && row.detalle.includes(`estado_cuenta ${k}`)));
+
+    L.q.run('DELETE FROM pagos WHERE k_cliente=?', k);
+    L.q.run('DELETE FROM fact_cxc_app WHERE k_cliente=?', k);
+    L.q.run('DELETE FROM debito_app WHERE k_cliente=?', k);
+    L.q.run('DELETE FROM fact_cxc_app WHERE id=?', despacho.data.id);
+    L.q.run('DELETE FROM credito WHERE k_cliente=?', k);
+    L.q.run('DELETE FROM cliente_extra WHERE k_cliente=?', k);
+    L.q.run('DELETE FROM dim_cliente WHERE k_cliente=?', k);
+  });
+  await t('prepago CxC consume solo lo aplicado y conserva el remanente', async () => {
+    const factura = (await detalle()).abiertas[0];
+    const abono = await call('a', 'POST', '/api/debito/movimientos', {
+      k_cliente: cliPagos.k_cliente, tipo: 'ABONO', monto: 500, fecha: '2026-10-20', folio: 'PREPAGO-CXC-TEST',
+      banco_id: bancoId, metodo: 'Transferencia SPEI',
+    });
+    assert.equal(abono.status, 201, JSON.stringify(abono.data));
+    const basePago = { k_cliente: cliPagos.k_cliente, fecha: '2026-10-20', metodo: 'Prepago', monto: 150, desde_prepago: 150, corte: '2026-10-13' };
+    const incompleto = await call('a', 'POST', '/api/pagos/lote', { ...basePago, aplicaciones: [{ no_factura: factura.no_factura, estacion_id: factura.estacion_id, monto: 100 }] });
+    assert.equal(incompleto.status, 400);
+    assert.equal((await call('a', 'GET', '/api/prepago/saldo?k=' + enc(cliPagos.k_cliente))).data.saldo_prepago, 500);
+    const r = await call('a', 'POST', '/api/pagos/lote', { ...basePago, referencia: 'APLICA-PREPAGO', aplicaciones: [{ no_factura: factura.no_factura, estacion_id: factura.estacion_id, monto: 150 }] });
+    assert.equal(r.status, 201, JSON.stringify(r.data));
+    assert.equal(r.data.aplicado, 150);
+    assert.equal(r.data.sin_aplicar, 0);
+    assert.equal(r.data.prepago_saldo_anterior, 500);
+    assert.equal(r.data.prepago_saldo_remanente, 350);
+    assert.equal((await call('a', 'GET', '/api/prepago/saldo?k=' + enc(cliPagos.k_cliente))).data.saldo_prepago, 350);
+    assert.ok(!(await call('a', 'GET', '/api/pagos?q=APLICA-PREPAGO')).data.rows.some((p) => p.sin_aplicar === 1));
+    const bitacora = (await call('a', 'GET', '/api/bitacora')).data.rows.find((row) => row.accion === 'PAGO' && row.detalle.includes('prepago_aplicado:$150.00'));
+    assert.ok(bitacora && bitacora.usuario === 'admin' && bitacora.detalle.includes('fecha:2026-10-20') && bitacora.detalle.includes('prepago_remanente:$350.00'));
+    for (const id of r.data.ids) await call('a', 'DELETE', '/api/pagos/' + id);
+    assert.equal((await call('a', 'DELETE', '/api/debito/movimientos/' + r.data.prepago_debito_id)).status, 200);
+    assert.equal((await call('a', 'DELETE', '/api/debito/movimientos/' + abono.data.id)).status, 200);
   });
 
   // ---- debito prepago ----
@@ -295,6 +373,27 @@ server.listen(0, '127.0.0.1', async () => {
 
   // ---- carga de Excel (ejecuta el ETL real de Python) ----
   await t('carga: rechaza archivos no Excel', async () => assert.equal((await call('a', 'POST', '/api/carga', null, Buffer.from('esto no es un excel'))).status, 400));
+  await t('por facturar: protege la carga y rechaza archivos con firma inválida', async () => {
+    assert.equal((await call('x', 'POST', '/api/por-facturar/carga', null, Buffer.from('no es xlsx'))).status, 401);
+    assert.equal((await call('a', 'POST', '/api/por-facturar/carga', null, Buffer.from('no es xlsx'))).status, 400);
+  });
+  if (process.env.POR_FACTURAR_XLSX && fs.existsSync(process.env.POR_FACTURAR_XLSX)) {
+    await t('por facturar: importa Layout Consumo en la copia temporal', async () => {
+      const antes = (await call('a', 'GET', '/api/por-facturar')).data;
+      const maxId = L.q.get('SELECT COALESCE(MAX(id),0) id FROM fact_cxc_app').id;
+      const r = await call('a', 'POST', '/api/por-facturar/carga', null, fs.readFileSync(process.env.POR_FACTURAR_XLSX));
+      assert.equal(r.status, 201, JSON.stringify(r.data));
+      assert.equal(r.data.importados, 12);
+      assert.ok(Math.abs(r.data.total - 8078.09) < 0.01);
+      const despues = (await call('a', 'GET', '/api/por-facturar')).data;
+      assert.equal(despues.total_despachos, antes.total_despachos + 12);
+      assert.ok(Math.abs(despues.total_monto - antes.total_monto - 8078.09) < 0.01);
+      assert.ok((await call('a', 'GET', '/api/bitacora')).data.rows.some((row) => row.accion === 'POR_FACTURAR_CARGA' && row.usuario === 'admin'));
+      const nuevos = L.q.all('SELECT id FROM fact_cxc_app WHERE id>?', maxId);
+      assert.equal(nuevos.length, 12);
+      L.q.run('DELETE FROM fact_cxc_app WHERE id>?', maxId);
+    });
+  }
   await t('carga: valida modo y módulos parciales', async () => {
     assert.equal((await call('a', 'POST', '/api/carga?modo=otro', null, Buffer.from('PK'))).status, 400);
     assert.equal((await call('a', 'POST', '/api/carga?modo=parcial', null, Buffer.from('PK'))).status, 400);

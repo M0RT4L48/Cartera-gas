@@ -146,7 +146,7 @@ INSERT OR IGNORE INTO metodos_pago(nombre, requiere_banco) VALUES
   ('Transferencia SPEI', 1),
   ('Efectivo', 0),
   ('Cheque', 1),
-  ('Tarjeta', 0),
+  ('Tarjeta', 1),
   ('Compensación', 0),
   ('Otro', 0);
 

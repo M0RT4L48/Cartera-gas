@@ -16,6 +16,41 @@ Abre <http://localhost:3000>. En el **primer arranque** la consola muestra el us
 Variables opcionales: `PORT` (3000), `HOST` (127.0.0.1; `0.0.0.0` para red local), `COOKIE_SECURE=1` (con HTTPS),
 `SESION_HORAS` (10), `ADMIN_PASSWORD` (solo primer arranque), `DB_PATH`, `PYTHON` (ejecutable para la carga de Excel).
 
+## Ejecutar con Docker
+
+Requiere Docker Desktop con Docker Compose. Desde esta carpeta, inicia la aplicación con:
+
+```powershell
+docker volume create cartera-gas-data
+docker compose up --build -d
+docker compose logs -f cartera-gas
+```
+
+Abre <http://localhost:3000>. Para acceder desde otras computadoras de la red local, usa la dirección IP del equipo que ejecuta Docker, por ejemplo `http://192.168.1.20:3000`, y permite el puerto 3000 en el firewall de ese equipo.
+
+La base SQLite vive en el volumen Docker `cartera-gas-data`, dentro del disco Linux de Docker Desktop, para evitar la penalización de I/O de SQLite sobre carpetas de Windows. El volumen sobrevive al actualizar o recrear el contenedor y no se copia dentro de la imagen. Los respaldos y archivos temporales de importación siguen en `respaldos` y `tmp` dentro de esta carpeta.
+
+Si ya tenías la aplicación ejecutándose con una carpeta `data` enlazada desde Windows, detén el contenedor y copia sus archivos al volumen antes de volver a iniciarlo. Desde PowerShell, en la carpeta `cartera-gas`, ejecuta:
+
+```powershell
+docker compose stop
+docker volume create cartera-gas-data
+docker run --rm --user root -v cartera-gas-data:/target -v "${PWD}\data:/source:ro" cartera-gas-cartera-gas sh -c "cp -a /source/. /target/ && chown -R node:node /target"
+docker compose up -d
+```
+
+La carpeta `data` original se conserva como copia, pero Compose ya no la usa. Para respaldar la base del volumen, detén primero la aplicación y copia el volumen con un contenedor auxiliar a una ubicación segura.
+
+Comandos útiles:
+
+```powershell
+docker compose stop
+docker compose up --build -d
+docker compose down
+```
+
+`docker compose down` elimina el contenedor, pero no el volumen `cartera-gas-data` ni las carpetas de respaldos y temporales del host. No uses `docker compose down -v` salvo que realmente quieras eliminar el volumen de la base de datos. No compartas una base SQLite por una unidad de red como sustituto del acceso web.
+
 ## Pestañas (igual que el diseño de referencia)
 
 | Pestaña | Qué hace |
@@ -25,7 +60,8 @@ Variables opcionales: `PORT` (3000), `HOST` (127.0.0.1; `0.0.0.0` para red local
 | **Por Facturar** | Registra importes pendientes por cliente y muestra sus despachos; al emitir una factura se seleccionan los despachos que se transferirán a CxC |
 | **Control de Débito** | Registra abonos (+) con método de pago y banco, y consumos (−) de saldo prepagado; consulta saldos a favor e historial filtrable por cliente, operación y fechas, con paginación; permite anular movimientos capturados en la app |
 | **Cobranza / Alertas** | Gestiones y promesas de pago; alertas de límite excedido, >60 días, próximas a vencer, sin límite, sin vencimiento |
-| **Catálogos** | Alta y edición de clientes (nombre, estación, contacto, RFC, límite y días de crédito); administración de bancos y métodos de pago por el administrador general |
+| **Clientes** | Catálogo de clientes: alta, edición, crédito, contacto, saldos, filtros y exportación CSV; ficha individual con estado de cuenta CSV filtrable por fechas |
+| **Catálogos** | Administración de bancos y métodos de pago por el administrador general |
 | **Usuarios y Roles** | Alta/edición de usuarios, rol y estación asignada; bitácora |
 | **Carga de Datos** | Sube `Gas_App.xlsx` desde el navegador (respaldo automático previo) |
 
@@ -56,7 +92,7 @@ Tablas de la aplicación: `usuarios`, `sesiones`, `pagos`, `debito_app`, `fact_c
 - El catálogo de métodos de pago inicia con Transferencia SPEI, Efectivo, Cheque, Tarjeta, Compensación y Otro. Sus opciones se administran en **Catálogos** y se comparten entre Aplicación de Pagos y Control de Débito; se puede configurar qué métodos requieren banco en pagos CxC. Los movimientos guardan el nombre del método para conservar el historial aunque se elimine del catálogo.
 - Los abonos en **Control de Débito** requieren método de pago y banco del catálogo; ambos datos se conservan en el historial. Los consumos no requieren ninguno de los dos.
 - Los clientes pueden cambiar de estación; se trasladan los registros vinculados y la edición se conserva al reimportar datos.
-- En **Cartera Activa**, usuarios administradores y gestores pueden registrar y editar facturas capturadas en la app para clientes existentes. El vencimiento se calcula sumando los días de crédito del cliente a la fecha de factura; da de alta clientes primero en **Catálogos**. No se editan renglones importados del Excel, y no se puede bajar el importe por debajo de lo ya abonado ni cambiar el folio si tiene pagos registrados.
+- En **Cartera Activa**, usuarios administradores y gestores pueden registrar y editar facturas capturadas en la app para clientes existentes. El vencimiento se calcula sumando los días de crédito del cliente a la fecha de factura; da de alta clientes primero en **Clientes**. No se editan renglones importados del Excel, y no se puede bajar el importe por debajo de lo ya abonado ni cambiar el folio si tiene pagos registrados.
 - No se usa `SALDO ACUMULADO POR CLIENTE` (acumulado dependiente del contexto, no sumable).
 
 ## Usuarios y roles

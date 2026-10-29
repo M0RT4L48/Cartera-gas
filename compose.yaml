@@ -1,0 +1,22 @@
+services:
+  cartera-gas:
+    build: .
+    container_name: cartera-gas
+    restart: unless-stopped
+    init: true
+    ports:
+      - "3000:3000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      DB_PATH: /app/data/cartera.db
+      PYTHON: python3
+    volumes:
+      - cartera_data:/app/data
+      - ./respaldos:/app/respaldos
+      - ./tmp:/app/tmp
+
+volumes:
+  cartera_data:
+    name: cartera-gas-data
+    external: true

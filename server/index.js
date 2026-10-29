@@ -131,6 +131,85 @@ function correrEtl(archivo, { modo, modulos }) {
     p.on('close', (code) => (code === 0 ? resolve(out.trim().split('\n').pop()) : reject(new HttpError(422, (err.trim().split('\n').pop() || 'Error al procesar el Excel')))));
   });
 }
+function leerLayoutPorFacturar(archivo) {
+  const py = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
+  return new Promise((resolve, reject) => {
+    const args = [path.join(L.ROOT, 'etl', 'leer_por_facturar.py'), archivo];
+    const p = spawn(py, args, { env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
+    let out = '', err = '';
+    p.stdout.on('data', (d) => (out += d)); p.stderr.on('data', (d) => (err += d));
+    p.on('error', (e) => reject(new HttpError(500, `No se pudo ejecutar Python (${py}): ${e.message}. Instala Python con pandas y openpyxl o define la variable PYTHON.`)));
+    p.on('close', (code) => {
+      if (code !== 0) return reject(new HttpError(422, err.trim() || 'No se pudo leer el layout de despachos'));
+      try { resolve(JSON.parse(out)); }
+      catch { reject(new HttpError(422, 'El lector devolvió datos inválidos para el layout')); }
+    });
+  });
+}
+async function cargaPorFacturar(req, res, user) {
+  exigir(user, 'facturas');
+  if (importando) throw new HttpError(409, 'Ya hay una importación en curso');
+  importando = true;
+  const tmpDir = path.join(L.ROOT, 'tmp'); fs.mkdirSync(tmpDir, { recursive: true });
+  const archivo = path.join(tmpDir, `por_facturar_${Date.now()}.xlsx`);
+  try {
+    const size = await recibirXlsx(req, archivo);
+    const fd = fs.openSync(archivo, 'r'), firma = Buffer.alloc(2);
+    fs.readSync(fd, firma, 0, 2, 0); fs.closeSync(fd);
+    if (firma.toString('latin1') !== 'PK') throw new HttpError(400, 'El archivo no es un Excel .xlsx válido');
+    const registros = await leerLayoutPorFacturar(archivo);
+    const importados = tx(() => {
+      const clientes = q.all('SELECT k_cliente,cliente,estacion_id FROM dim_cliente');
+      const porNombre = new Map();
+      for (const cliente of clientes) {
+        const clave = String(cliente.cliente || '').normalize('NFKC').trim().toLocaleLowerCase('es-MX');
+        const opciones = porNombre.get(clave) || [];
+        opciones.push(cliente);
+        porNombre.set(clave, opciones);
+      }
+      const despachosExistentes = new Set(q.all('SELECT despacho FROM v_cxc WHERE despacho IS NOT NULL')
+        .map((row) => String(row.despacho).normalize('NFKC').trim().toLocaleLowerCase('es-MX')));
+      const estaciones = estacionesAsignadas(user);
+      const errores = [], preparados = [], vistos = new Set();
+      for (const row of registros) {
+        const prefijo = `Fila ${row.fila}:`;
+        const claveCliente = String(row.cliente || '').normalize('NFKC').trim().toLocaleLowerCase('es-MX');
+        const matches = porNombre.get(claveCliente) || [];
+        if (!matches.length) {
+          errores.push(`${prefijo} el cliente "${row.cliente}" no está registrado.`);
+          continue;
+        }
+        if (matches.length > 1) {
+          errores.push(`${prefijo} el cliente "${row.cliente}" es ambiguo; hay más de un registro en el catálogo.`);
+          continue;
+        }
+        const cliente = matches[0];
+        if (estaciones.length && !estaciones.includes(cliente.estacion_id)) {
+          errores.push(`${prefijo} el cliente "${row.cliente}" está fuera de tus estaciones asignadas.`);
+          continue;
+        }
+        const claveDespacho = String(row.despacho || '').normalize('NFKC').trim().toLocaleLowerCase('es-MX');
+        if (vistos.has(claveDespacho) || despachosExistentes.has(claveDespacho)) {
+          errores.push(`${prefijo} el despacho "${row.despacho}" está duplicado en el archivo o ya fue registrado.`);
+          continue;
+        }
+        vistos.add(claveDespacho);
+        preparados.push({ ...row, cliente });
+      }
+      if (errores.length) throw new HttpError(422, errores.slice(0, 100).join('\n'));
+      const ids = preparados.map((row) => Number(q.run(`INSERT INTO fact_cxc_app
+        (fecha_despacho,despacho,importe,abono,k_cliente,estacion_id,estatus,grupo,fecha_factura,no_factura,fecha_pago,fecha_vencimiento,usuario_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      row.fecha_despacho, row.despacho, row.importe, row.abono, row.cliente.k_cliente, row.cliente.estacion_id,
+      'POR FACTURAR', row.grupo || null, row.fecha_factura || row.fecha_despacho,
+      row.no_factura || `PEND-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`, row.fecha_pago, null, user.id).lastInsertRowid));
+      const total = redondea(preparados.reduce((sum, row) => sum + row.importe - row.abono, 0));
+      L.bitacora(user, 'POR_FACTURAR_CARGA', `${preparados.length} despacho(s) · $${total.toFixed(2)} · ${Math.round(size / 1024)} KB`, ip(req));
+      return { ids, total };
+    });
+    return send(res, 201, { ok: true, importados: importados.ids.length, total: importados.total });
+  } finally { importando = false; fs.rm(archivo, { force: true }, () => {}); }
+}
 async function cargaExcel(req, res, user, query) {
   exigir(user, 'carga');
   const modo = query.get('modo') || 'completa';
@@ -236,6 +315,12 @@ async function api(req, res, url) {
       verificaCliente(user, factura.k_cliente);
       return send(res, 200, factura);
     }
+    if (p === '/api/prepago/saldo') {
+      const k = query.get('k');
+      verificaCliente(user, k);
+      const saldo = Q.saldoDebito(k);
+      return send(res, 200, { k_cliente: k, saldo_prepago: redondea(Math.max(0, saldo)) });
+    }
     if (p === '/api/clientes') {
       const pr = params(query, user);
       if (pr.formato === 'csv') {
@@ -247,6 +332,27 @@ async function api(req, res, url) {
           ['saldo_total', 'Saldo total'], ['disponible', 'Disponible'], ['max_dias', 'Máx. días vencido'], ['saldo_favor', 'Saldo a favor (débito)'], ['riesgo', 'Riesgo']], r.rows);
       }
       return send(res, 200, Q.clientes(pr));
+    }
+    if (p === '/api/cliente/estado-cuenta') {
+      exigir(user, 'export');
+      const k = query.get('k');
+      verificaCliente(user, k);
+      const desde = query.get('desde') || '';
+      const hasta = query.get('hasta') || '';
+      if (desde && !L.esFecha(desde)) throw new HttpError(400, 'La fecha inicial es inválida');
+      if (hasta && !L.esFecha(hasta)) throw new HttpError(400, 'La fecha final es inválida');
+      if (desde && hasta && desde > hasta) throw new HttpError(400, 'La fecha inicial no puede ser posterior a la fecha final');
+      const rows = Q.estadoCuenta({ k, desde, hasta });
+      const cliente = q.get('SELECT cliente FROM dim_cliente WHERE k_cliente=?', k);
+      L.bitacora(user, 'EXPORT', `estado_cuenta ${k} ${desde || 'inicio'}-${hasta || 'hoy'} · ${rows.length} movimiento(s)`, ip(req));
+      const nombre = k.replace(/[^a-zA-Z0-9_-]/g, '_') || 'cliente';
+      return csv(res, `estado_cuenta_${nombre}.csv`, [
+        ['fecha', 'Fecha'], ['tipo', 'Tipo de movimiento'], ['referencia', 'Referencia'], ['despacho', 'Despacho'],
+        ['factura', 'Factura'], ['grupo', 'Grupo'], ['concepto', 'Detalle'], ['cargo_cxc', 'Cargo CxC'],
+        ['abono_cxc', 'Abono CxC'], ['abono_prepago', 'Abono prepago'], ['consumo_prepago', 'Consumo prepago'],
+        ['importe_referencia', 'Importe de referencia'], ['saldo_cxc', 'Saldo CxC'], ['saldo_prepago', 'Saldo prepago'],
+        ['estado', 'Estado'], ['origen', 'Origen'], ['usuario', 'Usuario'],
+      ], rows);
     }
     if (p === '/api/cliente') { const k = query.get('k'); verificaCliente(user, k); return send(res, 200, Q.clienteDetalle({ corte: Q.corteValido(query.get('corte')), k })); }
     if (p === '/api/por-facturar') return send(res, 200, Q.porFacturar(params(query, user)));
@@ -287,6 +393,7 @@ async function api(req, res, url) {
   // ================= ESCRITURA =================
   let mt;
   if (m === 'POST' && p === '/api/carga') return cargaExcel(req, res, user, query);
+  if (m === 'POST' && p === '/api/por-facturar/carga') return cargaPorFacturar(req, res, user);
 
   if (m === 'POST' && p === '/api/bancos') {
     exigir(user, 'usuarios');
@@ -376,11 +483,14 @@ async function api(req, res, url) {
     if (!L.esFecha(b.fecha)) throw new HttpError(400, 'Fecha inválida');
     if (b.fecha > L.hoyISO()) throw new HttpError(400, 'La fecha de pago no puede ser futura');
     const metodoInput = txt(b.metodo, 40) || 'Transferencia SPEI';
-    const metodo = q.get('SELECT nombre,requiere_banco FROM metodos_pago WHERE nombre=? COLLATE NOCASE', metodoInput);
+    const esPrepagoDirecto = redondea(L.num(b.desde_prepago, 0)) > 0;
+    const metodo = esPrepagoDirecto && metodoInput === 'Prepago'
+      ? { nombre: 'Prepago', requiere_banco: 0 }
+      : q.get('SELECT nombre,requiere_banco FROM metodos_pago WHERE nombre=? COLLATE NOCASE', metodoInput);
     if (!metodo) throw new HttpError(400, 'Método de pago inválido');
     const metodoNombre = metodo.nombre;
-    const metodoConBanco = !!metodo.requiere_banco;
-    const bancoId = b.banco_id == null || b.banco_id === '' ? null : Number(b.banco_id);
+    const metodoConBanco = !esPrepagoDirecto && !!metodo.requiere_banco;
+    const bancoId = esPrepagoDirecto ? null : (b.banco_id == null || b.banco_id === '' ? null : Number(b.banco_id));
     const banco = bancoId == null ? null : q.get('SELECT id,nombre FROM bancos WHERE id=?', bancoId);
     if (metodoConBanco && !banco) throw new HttpError(400, `Selecciona un banco para el método ${metodoNombre}`);
     if (bancoId != null && !banco) throw new HttpError(400, 'Banco inválido');
@@ -392,16 +502,45 @@ async function api(req, res, url) {
     if (!items.length && !(total > 0)) throw new HttpError(400, 'Indica un monto mayor a cero o una aplicación válida');
     const totalAplicado = redondea(items.reduce((s, a) => s + a.monto, 0));
     if (total > 0 && totalAplicado > total + Q.EPS) throw new HttpError(400, 'La suma aplicada supera el monto total del pago');
+    // --- prepago ---
+    const desdePrepagoInput = redondea(L.num(b.desde_prepago, 0));
+    if (desdePrepagoInput > 0 && items.length === 0) throw new HttpError(400, 'Indica al menos una factura a la que aplicar el prepago');
+    if (desdePrepagoInput > 0 && (Math.abs(total - desdePrepagoInput) > Q.EPS || Math.abs(totalAplicado - desdePrepagoInput) > Q.EPS)) {
+      throw new HttpError(400, 'Distribuye exactamente el monto de prepago solicitado entre las facturas');
+    }
+    let saldoPrepagoDisponible = 0;
     const ids = tx(() => {
+      const deudaActual = redondea(q.get(`SELECT COALESCE(SUM(saldo),0) AS saldo FROM ${Q.FAC(corte)} WHERE k_cliente=? AND abierta=1`, b.k_cliente).saldo);
+      const montoSolicitado = total > 0 ? total : totalAplicado;
+      if (montoSolicitado > deudaActual + Q.EPS) {
+        throw new HttpError(400, `No se puede exceder la deuda actual ($${deudaActual.toFixed(2)})`);
+      }
+      if (desdePrepagoInput > 0) {
+        saldoPrepagoDisponible = redondea(Math.max(0, Q.saldoDebito(b.k_cliente)));
+        if (desdePrepagoInput > saldoPrepagoDisponible + Q.EPS) {
+          throw new HttpError(400, `El monto de prepago solicitado ($${desdePrepagoInput.toFixed(2)}) excede el saldo disponible ($${saldoPrepagoDisponible.toFixed(2)})`);
+        }
+      }
       const resIds = [];
       for (const a of items) {
         const d = q.get(`SELECT f.saldo FROM ${Q.FAC(corte)} f WHERE f.k_cliente=? AND f.estacion_id=? AND f.no_factura=?`, b.k_cliente, a.est, a.no);
         if (!d) throw new HttpError(404, `Factura ${a.no} no encontrada`);
         if (d.saldo <= Q.EPS) throw new HttpError(400, `La factura ${a.no} ya está liquidada`);
         if (a.monto > d.saldo + Q.EPS) throw new HttpError(400, `El monto de la factura ${a.no} excede su saldo (${d.saldo.toFixed(2)})`);
-        resIds.push(Number(q.run(`INSERT INTO pagos(k_cliente,estacion_id,no_factura,fecha,monto,metodo,referencia,notas,usuario_id,banco_id,banco)
+        const esPrepago = desdePrepagoInput > 0 ? 1 : 0;
+        resIds.push(Number(q.run(`INSERT INTO pagos(k_cliente,estacion_id,no_factura,fecha,monto,metodo,referencia,notas,usuario_id,banco_id,banco,desde_prepago)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+          b.k_cliente, a.est, a.no, b.fecha, a.monto, metodoNombre, txt(b.referencia, 80), txt(b.notas, 300), user.id, bancoId, banco ? banco.nombre : null, esPrepago).lastInsertRowid));
+      }
+      // Registrar consumo en débito si se usó prepago
+      if (desdePrepagoInput > 0) {
+        const cli = q.get('SELECT estacion_id FROM dim_cliente WHERE k_cliente=?', b.k_cliente);
+        const folioPrep = `PREPAGO-CXC-${b.no_factura || items.map((i) => i.no).join(',')}`;
+        const rPrep = q.run(`INSERT INTO debito_app(fecha,folio,tipo,importe,abono,k_cliente,estacion_id,usuario_id,metodo,banco_id,banco)
           VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-          b.k_cliente, a.est, a.no, b.fecha, a.monto, metodoNombre, txt(b.referencia, 80), txt(b.notas, 300), user.id, bancoId, banco ? banco.nombre : null).lastInsertRowid));
+          b.fecha, folioPrep.slice(0, 60), 'CONSUMO', desdePrepagoInput, 0,
+          b.k_cliente, cli.estacion_id, user.id, 'Aplicación a CxC', null, null);
+        resIds.prepago_debito_id = 1000000000 + Number(rPrep.lastInsertRowid);
       }
       const saldoSinAplicar = total > 0 ? redondea(total - totalAplicado) : 0;
       if (saldoSinAplicar > Q.EPS) {
@@ -414,8 +553,25 @@ async function api(req, res, url) {
       return resIds;
     });
     const totalGuardado = redondea(items.reduce((s, a) => s + a.monto, 0) + (total > 0 ? Math.max(0, total - totalAplicado) : 0));
-    L.bitacora(user, 'PAGO', `${ids.length} movimiento(s) $${totalGuardado} ${b.k_cliente} ref:${txt(b.referencia, 40)}`, ip(req));
-    return send(res, 201, { ok: true, ids, total: totalGuardado, aplicado: redondea(totalAplicado), sin_aplicar: total > 0 ? redondea(Math.max(0, total - totalAplicado)) : 0 });
+    const saldoRemanente = desdePrepagoInput > 0 ? redondea(Math.max(0, saldoPrepagoDisponible - desdePrepagoInput)) : 0;
+    const prepagoTag = desdePrepagoInput > 0 ? ` fecha:${b.fecha} prepago_aplicado:$${desdePrepagoInput.toFixed(2)} prepago_remanente:$${saldoRemanente.toFixed(2)}` : '';
+    L.bitacora(user, 'PAGO', `${ids.length} movimiento(s) $${totalGuardado} ${b.k_cliente} ref:${txt(b.referencia, 40)}${prepagoTag}`, ip(req));
+    return send(res, 201, {
+      ok: true,
+      ids,
+      total: totalGuardado,
+      aplicado: redondea(totalAplicado),
+      sin_aplicar: total > 0 ? redondea(Math.max(0, total - totalAplicado)) : 0,
+      desde_prepago: redondea(desdePrepagoInput),
+      prepago_saldo_anterior: redondea(saldoPrepagoDisponible),
+      prepago_saldo_remanente: saldoRemanente,
+      prepago_debito_id: ids.prepago_debito_id || null,
+      fecha: b.fecha,
+      cliente: b.k_cliente,
+      referencia: txt(b.referencia, 80),
+      metodo: metodoNombre,
+      facturas: items,
+    });
   }
   if (m === 'DELETE' && (mt = p.match(/^\/api\/pagos\/(\d+)$/))) {
     exigir(user, 'pagos');
@@ -541,12 +697,18 @@ async function api(req, res, url) {
     let banco = null;
     let metodoNombre = null;
     if (tipo === 'RECARGA') {
-      const metodoRow = q.get('SELECT nombre FROM metodos_pago WHERE nombre=? COLLATE NOCASE', metodoInput);
+      const metodoRow = q.get('SELECT nombre,requiere_banco FROM metodos_pago WHERE nombre=? COLLATE NOCASE', metodoInput);
       if (!metodoRow) throw new HttpError(400, 'Selecciona un método de pago válido para el abono');
       metodoNombre = metodoRow.nombre;
-      if (!Number.isInteger(bancoId) || bancoId <= 0) throw new HttpError(400, 'Selecciona un banco para registrar el abono');
-      banco = q.get('SELECT nombre FROM bancos WHERE id=?', bancoId)?.nombre;
-      if (!banco) throw new HttpError(400, 'Banco inválido');
+      const esEfectivo = /^efectivo$/i.test(metodoNombre);
+      const requiereBancoDebito = !esEfectivo && Boolean(metodoRow.requiere_banco || /cheque|tarjeta|transferencia/i.test(metodoNombre));
+      if (requiereBancoDebito) {
+        if (!Number.isInteger(bancoId) || bancoId <= 0) throw new HttpError(400, `Selecciona un banco para el método ${metodoNombre}`);
+        banco = q.get('SELECT nombre FROM bancos WHERE id=?', bancoId)?.nombre;
+        if (!banco) throw new HttpError(400, 'Banco inválido');
+      } else if (Number.isInteger(bancoId) && bancoId > 0) {
+        banco = q.get('SELECT nombre FROM bancos WHERE id=?', bancoId)?.nombre;
+      }
     }
     const antes = Q.saldoDebito(b.k_cliente);
     const r = q.run(`INSERT INTO debito_app(fecha,folio,tipo,importe,abono,k_cliente,estacion_id,usuario_id,metodo,banco_id,banco)
