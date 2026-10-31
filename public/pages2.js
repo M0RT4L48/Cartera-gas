@@ -47,7 +47,7 @@
             <label id="deb-metodo-wrap">Método de pago<select name="metodo" id="deb-metodo" required>
               <option value="">Selecciona un método…</option>${S.cat.metodos_pago.map((m) => opt(m.nombre, m.nombre))}
             </select></label>
-            <label id="deb-banco-wrap">Banco<select name="banco_id" id="deb-banco" required><option value="">Selecciona un banco…</option>${S.cat.bancos.map((b) => opt(b.id, b.nombre))}</select></label>
+            <label id="deb-banco-wrap" class="hidden">Banco<select name="banco_id" id="deb-banco" required><option value="">Selecciona un banco…</option>${S.cat.bancos.map((b) => opt(b.id, b.nombre))}</select></label>
           </div>
             <label>Monto ($)<input class="bigin" name="monto" type="number" min="0.01" step="0.01" placeholder="0.00" required></label>
           <div class="row2"><label>Fecha<input name="fecha" type="date" max="${hoyLocal()}" value="${hoyLocal()}" required></label>
@@ -74,15 +74,10 @@
         const esAbono = f.querySelector('input[name=tipo]:checked').value === 'ABONO';
         $('#deb-metodo').required = true;
         const metodoVal = ($('#deb-metodo').value || '').trim();
-        const metodoObj = S.cat.metodos_pago.find((m) => m.nombre === metodoVal);
-        const esEfectivo = /^efectivo$/i.test(metodoVal);
-        const esConBanco = !esEfectivo && Boolean(
-          (metodoObj && metodoObj.requiere_banco) ||
-          /cheque|tarjeta|transferencia/i.test(metodoVal)
-        );
-        bancoWrap.classList.toggle('hidden', esAbono && !esConBanco);
+        const esConBanco = /^(cheque|tarjeta|transferencia)(?:\s|$)/i.test(metodoVal);
+        bancoWrap.classList.toggle('hidden', !esConBanco);
         $('#deb-banco').required = esConBanco;
-        if (esAbono && !esConBanco) {
+        if (!esConBanco) {
           $('#deb-banco').value = '';
         }
       };
@@ -280,8 +275,8 @@
           <label>Cliente con deuda${pick.html}</label>
           <div class="row2"><label>Fecha pago<input id="pago-fecha" type="date" max="${hoyLocal()}" value="${hoyLocal()}"></label>
             <label>Ref / Folio<input id="pago-ref" maxlength="80" placeholder="SPEI-123"></label></div>
-          <label id="pago-metodo-wrap">Método<select id="pago-metodo">${S.cat.metodos_pago.map((m) => opt(m.nombre, m.nombre, 'Transferencia SPEI'))}</select></label>
-          <label id="pago-banco-wrap">Banco<select id="pago-banco"><option value="">Selecciona un banco…</option>${S.cat.bancos.map((b) => opt(b.id, b.nombre))}</select></label>
+          <label id="pago-metodo-wrap">Método<select id="pago-metodo" required><option value="">Selecciona un método…</option>${S.cat.metodos_pago.map((m) => opt(m.nombre, m.nombre))}</select></label>
+          <label id="pago-banco-wrap" style="display:none">Banco<select id="pago-banco"><option value="">Selecciona un banco…</option>${S.cat.bancos.map((b) => opt(b.id, b.nombre))}</select></label>
           <label id="pago-monto-wrap">Monto del pago ($)<input id="pago-monto" class="bigin" type="number" min="0.01" step="0.01" placeholder="0.00"></label>
           <div id="pago-prepago-box" style="margin-top:6px;margin-bottom:6px"></div>
           <div id="pago-confirmacion" class="note info" role="status" aria-live="polite" style="margin:8px 0" hidden></div>
@@ -296,11 +291,7 @@
     renderPrepagoBox(0, false);
     const actualizarBanco = () => {
       const metodoVal = ($('#pago-metodo').value || '').trim();
-      const metodo = S.cat.metodos_pago.find((m) => m.nombre === metodoVal);
-      const requiere = !!(
-        (metodo && metodo.requiere_banco) ||
-        /tarjeta|cheque|transferencia/i.test(metodoVal)
-      );
+      const requiere = /^(cheque|tarjeta|transferencia)(?:\s|$)/i.test(metodoVal);
       $('#pago-banco-wrap').style.display = requiere ? '' : 'none';
       $('#pago-banco').required = requiere;
       if (!requiere) $('#pago-banco').value = '';
@@ -336,6 +327,7 @@
     $('#btn-sin-aplicar').onclick = async () => {
       $('#pagoErr').textContent = '';
       if (!cli) { $('#pagoErr').textContent = 'Selecciona un cliente de la lista.'; return; }
+      if (!$('#pago-metodo').value) { $('#pagoErr').textContent = 'Selecciona un método de pago.'; return; }
       const chk = $('#pago-usar-prepago');
       if (tienePrepago && chk && chk.checked) {
         $('#pagoErr').textContent = 'El saldo de prepago ya está a favor del cliente. Asígnalo a las facturas pendientes.';
@@ -355,6 +347,7 @@
       if (!cli) { $('#pagoErr').textContent = 'Selecciona un cliente de la lista.'; return; }
       const chk = $('#pago-usar-prepago');
       const usarPrepago = tienePrepago && chk && chk.checked;
+      if (!usarPrepago && !$('#pago-metodo').value) { $('#pagoErr').textContent = 'Selecciona un método de pago.'; return; }
       const montoPrep = usarPrepago ? parseFloat($('#pago-prepago-monto')?.value) || 0 : 0;
       if (usarPrepago && !(montoPrep > 0)) { $('#pagoErr').textContent = 'Indica un monto de prepago mayor a cero.'; return; }
       if (usarPrepago && montoPrep > saldoPrepago + 0.005) { $('#pagoErr').textContent = `El monto excede el saldo de prepago disponible (${money(saldoPrepago, 2)})`; return; }

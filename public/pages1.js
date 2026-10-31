@@ -210,8 +210,8 @@
         <form id="formPago" class="form">
           <label id="pago-monto-wrap">Monto a abonar (MXN)<input name="monto" type="number" step="0.01" min="0.01" max="${f.saldo}" value="${f.saldo}" required></label>
           <label>Fecha de pago<input name="fecha" type="date" max="${hoyLocal()}" value="${hoyLocal()}" required></label>
-          <label id="pago-metodo-wrap">Método<select name="metodo" id="pago-metodo">${S.cat.metodos_pago.map((m) => opt(m.nombre, m.nombre, 'Transferencia SPEI'))}</select></label>
-          <label id="pago-banco-wrap">Banco<select name="banco_id" id="pago-banco"><option value="">Selecciona un banco…</option>${S.cat.bancos.map((b) => opt(b.id, b.nombre))}</select></label>
+          <label id="pago-metodo-wrap">Método<select name="metodo" id="pago-metodo" required><option value="">Selecciona un método…</option>${S.cat.metodos_pago.map((m) => opt(m.nombre, m.nombre))}</select></label>
+          <label id="pago-banco-wrap" style="display:none">Banco<select name="banco_id" id="pago-banco"><option value="">Selecciona un banco…</option>${S.cat.bancos.map((b) => opt(b.id, b.nombre))}</select></label>
           <label>Referencia / rastreo<input name="referencia" maxlength="80"></label>
           <label class="full">Notas<textarea name="notas" rows="2" maxlength="300"></textarea></label>
           <div class="full" id="pago-prepago-wrap" style="border:1px solid ${tienePrepago ? '#14B8A6' : '#D1D5DB'};border-radius:8px;padding:10px 12px;background:${tienePrepago ? 'rgba(20,184,166,.12)' : '#F8FAFC'}">
@@ -235,11 +235,7 @@
         });
         if (!usandoPrepago) {
           const metodoVal = ($('#pago-metodo').value || '').trim();
-          const metodo = S.cat.metodos_pago.find((m) => m.nombre === metodoVal);
-          const requiere = !!(
-            (metodo && metodo.requiere_banco) ||
-            /tarjeta|cheque|transferencia/i.test(metodoVal)
-          );
+          const requiere = /^(cheque|tarjeta|transferencia)(?:\s|$)/i.test(metodoVal);
           $('#pago-banco-wrap').style.display = requiere ? '' : 'none';
           $('#pago-banco').required = requiere;
           if (!requiere) $('#pago-banco').value = '';
