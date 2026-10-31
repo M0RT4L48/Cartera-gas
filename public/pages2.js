@@ -68,19 +68,11 @@
     };
     const f = $('#formDeb');
     if (f) {
-      const bancoWrap = $('#deb-banco-wrap'), metodoWrap = $('#deb-metodo-wrap');
+      const bancoWrap = $('#deb-banco-wrap');
       const tipoInputs = [...f.querySelectorAll('input[name=tipo]')];
       const actualizarCamposAbono = () => {
         const esAbono = f.querySelector('input[name=tipo]:checked').value === 'ABONO';
-        metodoWrap.classList.toggle('hidden', !esAbono);
-        $('#deb-metodo').required = esAbono;
-        if (!esAbono) {
-          $('#deb-metodo').value = '';
-          bancoWrap.classList.add('hidden');
-          $('#deb-banco').required = false;
-          $('#deb-banco').value = '';
-          return;
-        }
+        $('#deb-metodo').required = true;
         const metodoVal = ($('#deb-metodo').value || '').trim();
         const metodoObj = S.cat.metodos_pago.find((m) => m.nombre === metodoVal);
         const esEfectivo = /^efectivo$/i.test(metodoVal);
@@ -88,9 +80,9 @@
           (metodoObj && metodoObj.requiere_banco) ||
           /cheque|tarjeta|transferencia/i.test(metodoVal)
         );
-        bancoWrap.classList.toggle('hidden', !esConBanco);
+        bancoWrap.classList.toggle('hidden', esAbono && !esConBanco);
         $('#deb-banco').required = esConBanco;
-        if (!esConBanco) {
+        if (esAbono && !esConBanco) {
           $('#deb-banco').value = '';
         }
       };

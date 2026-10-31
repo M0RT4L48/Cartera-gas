@@ -726,9 +726,9 @@ async function api(req, res, url) {
     const bancoId = b.banco_id == null || b.banco_id === '' ? null : Number(b.banco_id);
     let banco = null;
     let metodoNombre = null;
-    if (tipo === 'RECARGA') {
+    if (tipo === 'RECARGA' || metodoInput) {
       const metodoRow = await q.get('SELECT nombre,requiere_banco FROM metodos_pago WHERE nombre=? COLLATE NOCASE', metodoInput);
-      if (!metodoRow) throw new HttpError(400, 'Selecciona un método de pago válido para el abono');
+      if (!metodoRow) throw new HttpError(400, 'Selecciona un método de pago válido');
       metodoNombre = metodoRow.nombre;
       const esEfectivo = /^efectivo$/i.test(metodoNombre);
       const requiereBancoDebito = !esEfectivo && Boolean(metodoRow.requiere_banco || /cheque|tarjeta|transferencia/i.test(metodoNombre));
@@ -738,6 +738,7 @@ async function api(req, res, url) {
         if (!banco) throw new HttpError(400, 'Banco inválido');
       } else if (Number.isInteger(bancoId) && bancoId > 0) {
         banco = (await q.get('SELECT nombre FROM bancos WHERE id=?', bancoId))?.nombre;
+        if (!banco) throw new HttpError(400, 'Banco inválido');
       }
     }
     const antes = await Q.saldoDebito(b.k_cliente);

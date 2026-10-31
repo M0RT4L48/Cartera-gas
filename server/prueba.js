@@ -267,13 +267,18 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal((await call('a', 'POST', '/api/debito/movimientos', { ...abono, banco_id: bancoId, metodo: 'Método inválido' })).status, 400);
     const a = await call('a', 'POST', '/api/debito/movimientos', { ...abono, banco_id: bancoId, metodo: 'Transferencia SPEI' });
     assert.equal(a.status, 201, JSON.stringify(a.data)); assert.equal(Math.round(a.data.saldo_nuevo), Math.round(s0 + 500));
-    const c = await call('a', 'POST', '/api/debito/movimientos', { k_cliente: favor.k_cliente, tipo: 'CONSUMO', monto: 200, fecha: '2026-10-20', folio: 'TKT-2' });
+    const c = await call('a', 'POST', '/api/debito/movimientos', {
+      k_cliente: favor.k_cliente, tipo: 'CONSUMO', monto: 200, fecha: '2026-10-20', folio: 'TKT-2',
+      banco_id: bancoId, metodo: 'Transferencia SPEI',
+    });
     assert.equal(Math.round(c.data.saldo_nuevo), Math.round(s0 + 300));
     assert.equal(Math.round((await call('a', 'GET', '/api/dashboard')).data.kpis.saldo_a_favor), Math.round(dash.kpis.saldo_a_favor + 300));
     const mv = (await call('a', 'GET', '/api/debito/movimientos?k=' + enc(favor.k_cliente))).data.rows;
     assert.ok(mv.some((m) => m.folio === 'TKT-1' && m.origen === 'app' && m.metodo === 'Transferencia SPEI' && m.banco === 'BBVA'));
+    assert.ok(mv.some((m) => m.folio === 'TKT-2' && m.origen === 'app' && m.metodo === 'Transferencia SPEI' && m.banco === 'BBVA'));
     const detalleDebito = (await call('a', 'GET', '/api/cliente?k=' + enc(favor.k_cliente))).data.debito;
     assert.ok(detalleDebito.some((m) => m.folio === 'TKT-1' && m.metodo === 'Transferencia SPEI' && m.banco === 'BBVA'));
+    assert.ok(detalleDebito.some((m) => m.folio === 'TKT-2' && m.metodo === 'Transferencia SPEI' && m.banco === 'BBVA'));
     assert.equal((await call('a', 'DELETE', '/api/debito/movimientos/' + a.data.id)).status, 200);
     assert.equal((await call('a', 'DELETE', '/api/debito/movimientos/' + c.data.id)).status, 200);
     assert.equal(Math.round((await call('a', 'GET', '/api/debito?signo=favor')).data.rows.find((x) => x.k_cliente === favor.k_cliente).saldo), Math.round(s0));
