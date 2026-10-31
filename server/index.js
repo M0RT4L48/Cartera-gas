@@ -412,14 +412,33 @@ async function api(req, res, url) {
     }
     if (p === '/api/usuarios') {
       exigir(user, 'usuarios');
-      const rows = await q.all(`SELECT u.id,u.usuario,u.nombre,u.email,u.rol,u.estacion_id,u.activo,u.ultimo_login,u.creado
-        FROM usuarios u ORDER BY u.usuario`);
-      return send(res, 200, { rows: await Promise.all(rows.map(async (u) => {
-        const ids = await L.estacionesUsuario(u);
-        const estaciones = ids.length ? await q.all('SELECT e.id, e.nombre FROM dim_estacion e WHERE e.id IN (' + ids.map(() => '?').join(',') + ') ORDER BY e.nombre', ...ids) : [];
-        const estacion = estaciones[0] ? estaciones[0].nombre : (u.estacion_id ? (await q.get('SELECT nombre FROM dim_estacion WHERE id=?', u.estacion_id))?.nombre : null);
-        return { ...u, estaciones, estacion: estacion || 'Todas' };
-      })) });
+      const rows = await q.all(`SELECT u.id,u.usuario,u.nombre,u.email,u.rol,u.estacion_id,u.activo,u.ultimo_login,u.creado,
+          e.id AS asignacion_estacion_id,e.nombre AS asignacion_estacion_nombre
+        FROM usuarios u
+        LEFT JOIN usuario_estaciones ue ON ue.usuario_id=u.id
+        LEFT JOIN dim_estacion e ON e.id=COALESCE(ue.estacion_id,
+          CASE WHEN NOT EXISTS (SELECT 1 FROM usuario_estaciones ue2 WHERE ue2.usuario_id=u.id) THEN u.estacion_id END)
+        ORDER BY u.usuario,e.nombre`);
+      const usuarios = new Map();
+      for (const row of rows) {
+        let usuario = usuarios.get(row.id);
+        if (!usuario) {
+          usuario = {
+            id: row.id, usuario: row.usuario, nombre: row.nombre, email: row.email, rol: row.rol,
+            estacion_id: row.estacion_id, activo: row.activo, ultimo_login: row.ultimo_login, creado: row.creado,
+            estaciones: [],
+          };
+          usuarios.set(row.id, usuario);
+        }
+        if (row.asignacion_estacion_id != null) {
+          usuario.estaciones.push({ id: row.asignacion_estacion_id, nombre: row.asignacion_estacion_nombre });
+        }
+      }
+      const resultado = [...usuarios.values()].map((usuario) => ({
+        ...usuario,
+        estacion: usuario.estaciones[0]?.nombre || 'Todas',
+      }));
+      return send(res, 200, { rows: resultado });
     }
     if (p === '/api/bitacora') { exigir(user, 'bitacora'); return send(res, 200, { rows: await q.all('SELECT * FROM bitacora ORDER BY id DESC LIMIT 300') }); }
   }

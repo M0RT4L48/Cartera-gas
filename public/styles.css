@@ -113,6 +113,8 @@ th.sort{cursor:pointer} th.sort:hover{color:var(--secondary)}
 th.sort.on:after{content:" ▾"} th.sort.on.asc:after{content:" ▴"}
 td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 td.wrap{white-space:normal;min-width:200px;max-width:380px}
+.usuarios-estaciones{white-space:normal;min-width:200px;max-width:380px}
+.usuarios-estaciones-lista{display:flex;flex-wrap:wrap;gap:4px;white-space:normal}
 tr.click{cursor:pointer} tr.click:hover td{background:rgba(45,108,223,.06)}
 tbody tr:hover td{background:rgba(45,108,223,.04)}
 tfoot td{font-weight:700;background:var(--bg);position:sticky;bottom:0}
