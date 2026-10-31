@@ -488,6 +488,52 @@ async function api(req, res, url) {
     return send(res, 200, { ok: true });
   }
 
+  if (m === 'PUT' && (mt = p.match(/^\/api\/por-facturar\/(\d+)$/))) {
+    exigir(user, 'facturas');
+    const id = Number(mt[1]);
+    if (!Number.isSafeInteger(id) || id <= 0) throw new HttpError(400, 'Identificador de despacho inválido');
+    const despachoActual = await q.get(`SELECT id,origen,k_cliente,estacion_id,fecha_despacho,despacho,grupo,importe,abono,estatus
+      FROM v_cxc WHERE id=?`, id);
+    if (!despachoActual || despachoActual.estatus !== 'POR FACTURAR' || despachoActual.importe - despachoActual.abono <= 0) {
+      throw new HttpError(404, 'El despacho no existe o ya no está pendiente de facturar');
+    }
+    await verificaCliente(user, despachoActual.k_cliente);
+    const body = await readBody(req);
+    const fechaDespacho = txt(body.fecha_despacho, 10);
+    if (!L.esFecha(fechaDespacho) || fechaDespacho > L.hoyISO()) {
+      throw new HttpError(400, 'La fecha de despacho es inválida o futura');
+    }
+    const despacho = txt(body.despacho, 80) || null;
+    const grupo = txt(body.grupo, 60) || null;
+    const montoPendiente = redondea(L.num(body.monto, -1));
+    const importe = redondea(montoPendiente + Number(despachoActual.abono || 0));
+    if (!(montoPendiente > 0) || importe > 1e9) {
+      throw new HttpError(400, 'El pendiente debe ser mayor a cero y el importe total no exceder $1,000,000,000');
+    }
+    const normalizaDespacho = (valor) => String(valor || '').normalize('NFKC').trim().toLocaleLowerCase('es-MX');
+    if (despacho && normalizaDespacho(despacho) !== normalizaDespacho(despachoActual.despacho)) {
+      const existentes = await q.all('SELECT id,despacho FROM v_cxc WHERE despacho IS NOT NULL');
+      const clave = normalizaDespacho(despacho);
+      if (existentes.some((row) => row.id !== id && normalizaDespacho(row.despacho) === clave)) {
+        throw new HttpError(409, 'Ya existe otro despacho con ese nombre');
+      }
+    }
+    const tabla = despachoActual.origen === 'app' ? 'fact_cxc_app' : 'fact_cxc';
+    const idInterno = despachoActual.origen === 'app' ? id - 2000000000 : id;
+    const resultado = await q.run(`UPDATE ${tabla}
+      SET fecha_despacho=?, despacho=?, grupo=?, importe=?
+      WHERE id=? AND estatus='POR FACTURAR' AND importe-abono>0`,
+    fechaDespacho, despacho, grupo, importe, idInterno);
+    if (resultado.changes !== 1) throw new HttpError(409, 'El despacho cambió o dejó de estar pendiente; vuelve a cargar la lista');
+    await L.bitacora(user, 'DESPACHO_EDITA',
+      `${despachoActual.k_cliente} despacho #${id}: fecha ${despachoActual.fecha_despacho}->${fechaDespacho}, despacho ${despachoActual.despacho || ''}->${despacho || ''}, grupo ${despachoActual.grupo || ''}->${grupo || ''}, pendiente ${redondea(despachoActual.importe - despachoActual.abono)}->${montoPendiente}`,
+      ip(req));
+    return send(res, 200, {
+      ok: true, id, fecha_despacho: fechaDespacho, despacho, grupo,
+      importe, abono: Number(despachoActual.abono || 0), monto: montoPendiente,
+    });
+  }
+
   if (m === 'POST' && p === '/api/por-facturar') {
     exigir(user, 'facturas');
     const b = await readBody(req);

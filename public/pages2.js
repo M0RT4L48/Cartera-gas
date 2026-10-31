@@ -488,15 +488,96 @@
         <label>Cliente<input value="${cliente}" readonly></label>
         <label>Folio / No. factura<input name="no_factura" maxlength="80" required></label>
         <label>Fecha de factura<input name="fecha_factura" type="date" max="${hoyLocal()}" value="${hoyLocal()}" required></label>
-        <div class="full tablewrap nomax"><table><thead><tr><th><input type="checkbox" id="seleccionarTodosDespachos" checked aria-label="Seleccionar todos los despachos"></th><th>Fecha</th><th>Despacho</th><th>Grupo</th><th class="n">Pendiente</th></tr></thead><tbody id="despachosEmitir">
+        <div class="full tablewrap nomax"><table><thead><tr><th><input type="checkbox" id="seleccionarTodosDespachos" checked aria-label="Seleccionar todos los despachos"></th><th>Fecha</th><th>Despacho</th><th>Grupo</th><th class="n">Pendiente</th><th></th></tr></thead><tbody id="despachosEmitir">
           ${pendientes.map((d) => html`<tr><td><input type="checkbox" name="despacho_id" value="${d.id}" data-monto="${Math.max(0, d.monto)}" checked></td>
-            <td>${fdate(d.fecha_despacho)}</td><td>${d.despacho || ''}</td><td>${d.grupo || ''}</td><td class="n">${money(d.monto, 2)}</td></tr>`)}</tbody>
-          <tfoot><tr><td colspan="4">Total seleccionado</td><td class="n strong" id="totalSeleccionado"></td></tr></tfoot></table></div>
+            <td>${fdate(d.fecha_despacho)}</td><td>${d.despacho || ''}</td><td>${d.grupo || ''}</td><td class="n">${money(d.monto, 2)}</td>
+            <td><button type="button" class="btn small" data-despacho-action="editar" data-id="${d.id}" aria-label="Editar despacho ${d.despacho || ''}" title="Editar despacho">
+              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg></button></td></tr>`)}</tbody>
+          <tfoot><tr><td colspan="4">Total seleccionado</td><td class="n strong" id="totalSeleccionado"></td><td></td></tr></tfoot></table></div>
         <div class="full err" id="emitirFacturaErr"></div>
         <div class="full actions"><button type="button" class="btn" data-act="cerrar">Cancelar</button><button type="submit" class="btn dark">Emitir factura</button></div>
       </form>`, { wide: true });
     const form = $('#formEmitirFacturaCliente');
     const checks = () => [...form.querySelectorAll('input[name="despacho_id"]')];
+    const renderDespacho = (row, despacho) => {
+      const celdas = row.cells;
+      celdas[1].textContent = fdate(despacho.fecha_despacho);
+      celdas[2].textContent = despacho.despacho || '';
+      celdas[3].textContent = despacho.grupo || '';
+      celdas[4].textContent = money(despacho.monto, 2);
+      const boton = document.createElement('button');
+      boton.type = 'button';
+      boton.className = 'btn small';
+      boton.dataset.despachoAction = 'editar';
+      boton.dataset.id = despacho.id;
+      boton.setAttribute('aria-label', `Editar despacho ${despacho.despacho || ''}`);
+      boton.title = 'Editar despacho';
+      boton.innerHTML = '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg>';
+      celdas[5].replaceChildren(boton);
+      const checkbox = celdas[0].querySelector('input');
+      checkbox.dataset.monto = String(despacho.monto);
+    };
+    const inputCelda = (cell, type, value, { maxLength, min, step, max, required } = {}) => {
+      const input = document.createElement('input');
+      input.type = type;
+      input.value = value == null ? '' : String(value);
+      if (maxLength) input.maxLength = maxLength;
+      if (min != null) input.min = String(min);
+      if (step) input.step = String(step);
+      if (max != null) input.max = String(max);
+      if (required) input.required = true;
+      cell.replaceChildren(input);
+      return input;
+    };
+    $('#despachosEmitir').addEventListener('click', async (event) => {
+      const boton = event.target.closest('[data-despacho-action]');
+      if (!boton) return;
+      const fila = boton.closest('tr');
+      const despacho = pendientes.find((item) => String(item.id) === boton.dataset.id);
+      if (!fila || !despacho) return;
+      if (boton.dataset.despachoAction === 'editar') {
+        inputCelda(fila.cells[1], 'date', despacho.fecha_despacho, { max: hoyLocal(), required: true });
+        inputCelda(fila.cells[2], 'text', despacho.despacho, { maxLength: 80 });
+        inputCelda(fila.cells[3], 'text', despacho.grupo, { maxLength: 60 });
+        inputCelda(fila.cells[4], 'number', despacho.monto, { min: 0.01, max: 1e9, step: 0.01, required: true });
+        const acciones = document.createElement('div');
+        acciones.style.cssText = 'display:flex;gap:4px';
+        for (const [accion, etiqueta, clase] of [['guardar', 'Guardar', 'btn small dark'], ['cancelar', 'Cancelar', 'btn small']]) {
+          const accionBoton = document.createElement('button');
+          accionBoton.type = 'button';
+          accionBoton.className = clase;
+          accionBoton.dataset.despachoAction = accion;
+          accionBoton.dataset.id = despacho.id;
+          accionBoton.textContent = etiqueta;
+          acciones.append(accionBoton);
+        }
+        fila.cells[5].replaceChildren(acciones);
+        return;
+      }
+      if (boton.dataset.despachoAction === 'cancelar') {
+        renderDespacho(fila, despacho);
+        return;
+      }
+      const [fecha, nombre, grupo, monto] = [...fila.cells].slice(1, 5).map((cell) => cell.querySelector('input').value);
+      if (!fecha || !monto || Number(monto) <= 0) { toast('Completa una fecha válida y un pendiente mayor a cero.', 'bad'); return; }
+      boton.disabled = true;
+      try {
+        const actualizado = await api('/api/por-facturar/' + encodeURIComponent(despacho.id), {
+          method: 'PUT',
+          body: { fecha_despacho: fecha, despacho: nombre, grupo, monto },
+        });
+        Object.assign(despacho, actualizado);
+        renderDespacho(fila, despacho);
+        updateTotal();
+        toast('Despacho actualizado.');
+      } catch (error) {
+        toast(error.message, 'bad');
+        boton.disabled = false;
+      }
+    });
+    $('#despachosEmitir').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && event.target.matches('input')) event.preventDefault();
+    });
     const updateTotal = () => {
       const total = checks().filter((c) => c.checked).reduce((sum, c) => sum + Number(c.dataset.monto), 0);
       $('#totalSeleccionado').textContent = money(total, 2);

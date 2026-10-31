@@ -516,16 +516,47 @@ server.listen(0, '127.0.0.1', async () => {
     const listaPendientes = await call('a', 'GET', '/api/por-facturar?k=' + enc(altaCliente.data.k_cliente));
     assert.equal(listaPendientes.data.rows[0].despachos, 2);
     assert.equal(listaPendientes.data.rows[0].items.length, 2);
+    const despachoEditar = listaPendientes.data.rows[0].items.find((item) => item.origen === 'app' && item.despacho === 'DESPACHO-1');
+    const cambiosDespacho = { fecha_despacho: '2026-10-24', despacho: 'DESPACHO-EDITADO', grupo: 'GRUPO-EDITADO', monto: 95.25 };
+    assert.equal((await call('l', 'PUT', '/api/por-facturar/' + despachoEditar.id, cambiosDespacho)).status, 403);
+    assert.equal((await call('a', 'PUT', '/api/por-facturar/' + despachoEditar.id, {
+      ...cambiosDespacho, despacho: 'DESPACHO-2',
+    })).status, 409);
+    assert.equal((await call('a', 'PUT', '/api/por-facturar/' + despachoEditar.id, {
+      ...cambiosDespacho, fecha_despacho: '2099-01-01',
+    })).status, 400);
+    const editDespachoResp = await call('a', 'PUT', '/api/por-facturar/' + despachoEditar.id, cambiosDespacho);
+    assert.equal(editDespachoResp.status, 200, JSON.stringify(editDespachoResp.data));
+    const listaEditada = await call('a', 'GET', '/api/por-facturar?k=' + enc(altaCliente.data.k_cliente));
+    const despachoEditado = listaEditada.data.rows[0].items.find((item) => item.id === despachoEditar.id);
+    assert.equal(despachoEditado.fecha_despacho, cambiosDespacho.fecha_despacho);
+    assert.equal(despachoEditado.despacho, cambiosDespacho.despacho);
+    assert.equal(despachoEditado.grupo, cambiosDespacho.grupo);
+    assert.equal(despachoEditado.monto, cambiosDespacho.monto);
+    const idDespachoExcel = 1900000000 + (process.pid % 10000000);
+    await L.q.run(`INSERT INTO fact_cxc(id,fecha_despacho,despacho,importe,abono,k_cliente,estacion_id,estatus,grupo)
+      VALUES (?,?,?,?,?,?,?,?,?)`, idDespachoExcel, '2026-10-25', 'DESPACHO-EXCEL', 37, 5,
+    altaCliente.data.k_cliente, 1, 'POR FACTURAR', 'GRUPO-EXCEL');
+    try {
+      const excelEdit = await call('a', 'PUT', '/api/por-facturar/' + idDespachoExcel, {
+        fecha_despacho: '2026-10-26', despacho: 'DESPACHO-EXCEL-EDITADO', grupo: 'GRUPO-EXCEL-EDITADO', monto: 42,
+      });
+      assert.equal(excelEdit.status, 200, JSON.stringify(excelEdit.data));
+      assert.equal(excelEdit.data.importe, 47);
+      assert.equal((await L.q.get('SELECT importe,abono FROM fact_cxc WHERE id=?', idDespachoExcel)).importe, 47);
+      const audit = await L.q.get("SELECT detalle FROM bitacora WHERE accion='DESPACHO_EDITA' AND detalle LIKE ?", `%#${idDespachoExcel}%`);
+      assert.ok(audit && audit.detalle.includes('DESPACHO-EXCEL-EDITADO'));
+    } finally { await L.q.run('DELETE FROM fact_cxc WHERE id=?', idDespachoExcel); }
     const sinSeleccion = await call('a', 'POST', '/api/cartera/facturas', {
       k_cliente: altaCliente.data.k_cliente, no_factura: 'SIN-SELECCION', fecha_factura: '2026-10-27', facturar_por_facturar: true, ids: [],
     });
     assert.equal(sinSeleccion.status, 400);
     const despachoFacturado = await call('a', 'POST', '/api/cartera/facturas', {
       k_cliente: altaCliente.data.k_cliente, no_factura: 'FACTURA-SELECCION', fecha_factura: '2026-10-27',
-      facturar_por_facturar: true, ids: [listaPendientes.data.rows[0].items[0].id],
+      facturar_por_facturar: true, ids: [despachoEditar.id],
     });
     assert.equal(despachoFacturado.status, 201, JSON.stringify(despachoFacturado.data));
-    assert.equal(despachoFacturado.data.importe, 80.25);
+    assert.equal(despachoFacturado.data.importe, 95.25);
     assert.equal(despachoFacturado.data.actualizados, 1);
     const restante = await call('a', 'GET', '/api/por-facturar?k=' + enc(altaCliente.data.k_cliente));
     assert.equal(restante.data.rows[0].despachos, 1);
@@ -538,7 +569,7 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal(nuevo.status, 201, JSON.stringify(nuevo.data));
     assert.equal(nuevo.data.fecha_vencimiento, '2026-11-04');
     const clienteNuevo = (await call('a', 'GET', '/api/cliente?k=' + enc(altaCliente.data.k_cliente))).data;
-    assert.equal(clienteNuevo.cliente.saldo_total, 123.45 + 80.25 + 120);
+    assert.equal(clienteNuevo.cliente.saldo_total, 123.45 + 95.25 + 120);
     assert.equal((await call('l', 'POST', '/api/cartera/facturas', { ...body, k_cliente: cliPagos.k_cliente })).status, 403);
     for (const id of [existente.data.id, nuevo.data.id, pendiente1.data.id, pendiente2.data.id, facturaRecalculo.data.id]) await L.q.run('DELETE FROM fact_cxc_app WHERE id=?', id);
     await L.q.run('DELETE FROM pagos WHERE no_factura=? AND k_cliente=?', 'PRUEBA-MANUAL-EDIT', cliPagos.k_cliente);

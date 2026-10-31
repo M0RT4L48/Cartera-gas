@@ -66,7 +66,7 @@ docker compose down
 |---|---|
 | **Cartera Activa** | Antigüedad, facturado vs cobrado y listado de facturas; permite registrar facturas para clientes del catálogo y calcula el vencimiento según sus días de crédito |
 | **Aplicación de Pagos (CxC)** | Elige cliente, captura el monto total y guarda el cobro sin aplicar o distribuye **FIFO** (facturas más antiguas primero) o manualmente; solicita banco para transferencias y cheques, conserva el banco en el historial y el sobrante como monto no aplicado |
-| **Por Facturar** | Registra importes pendientes por cliente y muestra sus despachos; al emitir una factura se seleccionan los despachos que se transferirán a CxC |
+| **Por Facturar** | Registra importes pendientes por cliente y muestra sus despachos; permite editar fecha, despacho, grupo e importe pendiente antes de facturar (con auditoría en bitácora); al emitir una factura se seleccionan los despachos que se transferirán a CxC |
 | **Control de Débito** | Registra abonos (+) con método de pago y banco, y consumos (−) de saldo prepagado; consulta saldos a favor e historial filtrable por cliente, operación y fechas, con paginación; permite anular movimientos capturados en la app |
 | **Cobranza / Alertas** | Gestiones y promesas de pago; alertas de límite excedido, >60 días, próximas a vencer, sin límite, sin vencimiento |
 | **Clientes** | Catálogo de clientes: alta, edición, crédito, contacto, saldos, filtros y exportación CSV; ficha individual con estado de cuenta CSV filtrable por fechas |
