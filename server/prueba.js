@@ -408,6 +408,9 @@ server.listen(0, '127.0.0.1', async () => {
       actual: supervisorAlta.data.password_temporal, nueva: 'Supervisor2026x',
     })).status, 200);
     const profile = (await call('s', 'GET', '/api/me')).data;
+    assert.deepEqual([...profile.estaciones].sort((a, b) => a - b), [...asignadas].sort((a, b) => a - b));
+    const catalogoSupervisor = (await call('s', 'GET', '/api/catalogos')).data;
+    assert.deepEqual(catalogoSupervisor.estaciones.map((station) => station.id).sort((a, b) => a - b), [...asignadas].sort((a, b) => a - b));
     for (const permission of ['anular_prepago', 'editar_despacho', 'anular_pago']) assert.ok(profile.permisos.includes(permission));
     for (const permission of ['pagos', 'debito', 'facturas', 'usuarios']) assert.ok(!profile.permisos.includes(permission));
     assert.equal((await call('s', 'GET', '/api/usuarios')).status, 403);
@@ -417,6 +420,11 @@ server.listen(0, '127.0.0.1', async () => {
     const k = (await call('a', 'POST', '/api/clientes', {
       cliente: `Cliente Supervisor ${process.pid}`, estacion_id: asignadas[0], limite: 0, dias: 0,
     })).data.k_cliente;
+    const clienteSegundaEstacion = await call('a', 'POST', '/api/clientes', {
+      cliente: `Cliente Supervisor Segunda ${process.pid}`, estacion_id: asignadas[1], limite: 0, dias: 0,
+    });
+    assert.equal(clienteSegundaEstacion.status, 201, JSON.stringify(clienteSegundaEstacion.data));
+    assert.equal((await call('s', 'GET', '/api/cliente?k=' + enc(clienteSegundaEstacion.data.k_cliente))).status, 200);
     const pendiente = await call('a', 'POST', '/api/por-facturar', {
       k_cliente: k, importe: 80, fecha_despacho: '2026-10-25', despacho: `DESP-SUP-${process.pid}`,
     });
