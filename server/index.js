@@ -977,9 +977,8 @@ async function api(req, res, url) {
     await tx(async () => {
       r = await q.run('INSERT INTO usuarios(usuario,nombre,email,rol,estacion_id,must_change,pass_hash) VALUES (?,?,?,?,?,1,?)',
         usuario, txt(b.nombre, 100), txt(b.email, 120) || null, b.rol, est, L.hashPassword(temporal));
-      if (estaciones.length) {
-        const inserts = estaciones.map((stationId) => `(${Number(r.lastInsertRowid)}, ${stationId})`).join(',');
-        await q.run(`INSERT INTO usuario_estaciones(usuario_id, estacion_id) VALUES ${inserts}`);
+      for (const stationId of estaciones) {
+        await q.run('INSERT INTO usuario_estaciones(usuario_id, estacion_id) VALUES (?, ?)', Number(r.lastInsertRowid), stationId);
       }
     });
     await L.bitacora(user, 'USUARIO_ALTA', `${usuario} (${b.rol}) estaciones=${estaciones.join(',') || 'todas'}`, ip(req));
@@ -1002,7 +1001,9 @@ async function api(req, res, url) {
       await q.run('UPDATE usuarios SET nombre=?, email=?, rol=?, estacion_id=?, activo=? WHERE id=?',
         txt(b.nombre, 100) || u.nombre, b.email === undefined ? u.email : (txt(b.email, 120) || null), rol, est, activo, id);
       await q.run('DELETE FROM usuario_estaciones WHERE usuario_id=?', id);
-      if (estaciones.length) await q.run('INSERT INTO usuario_estaciones(usuario_id, estacion_id) VALUES ' + estaciones.map((stationId) => `(${id}, ${stationId})`).join(',') );
+      for (const stationId of estaciones) {
+        await q.run('INSERT INTO usuario_estaciones(usuario_id, estacion_id) VALUES (?, ?)', id, stationId);
+      }
     });
     if (!activo) await q.run('DELETE FROM sesiones WHERE usuario_id=?', id);
     await L.bitacora(user, 'USUARIO_EDITA', `${u.usuario}: rol=${rol} activo=${activo} estaciones=${estaciones.join(',') || 'todas'}`, ip(req));

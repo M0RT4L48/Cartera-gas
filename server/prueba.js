@@ -376,13 +376,17 @@ server.listen(0, '127.0.0.1', async () => {
       todas_estaciones: false, estaciones: asignadas,
     });
     assert.equal(supervisorAlta.status, 201, JSON.stringify(supervisorAlta.data));
+    const relacionesAlta = await L.q.all('SELECT estacion_id FROM usuario_estaciones WHERE usuario_id=? ORDER BY estacion_id', supervisorAlta.data.id);
+    assert.deepEqual(relacionesAlta.map((relacion) => relacion.estacion_id), [...asignadas].sort((a, b) => a - b));
     const supervisor = (await call('a', 'GET', '/api/usuarios')).data.rows.find((row) => row.usuario === 'supervisor1');
     assert.deepEqual(supervisor.estaciones.map((station) => station.id), asignadas);
     assert.equal((await call('a', 'PUT', '/api/usuarios/' + supervisor.id, {
-      rol: 'supervisor', activo: true, todas_estaciones: false, estaciones: [asignadas[0]],
+      rol: 'supervisor', activo: true, todas_estaciones: false, estaciones: [asignadas[1], asignadas[0]],
     })).status, 200);
+    const relacionesEditadas = await L.q.all('SELECT estacion_id FROM usuario_estaciones WHERE usuario_id=? ORDER BY estacion_id', supervisor.id);
+    assert.deepEqual(relacionesEditadas.map((relacion) => relacion.estacion_id), [...asignadas].sort((a, b) => a - b));
     const editado = (await call('a', 'GET', '/api/usuarios')).data.rows.find((row) => row.id === supervisor.id);
-    assert.deepEqual(editado.estaciones.map((station) => station.id), [asignadas[0]]);
+    assert.deepEqual(editado.estaciones.map((station) => station.id), asignadas);
     assert.equal((await call('a', 'POST', '/api/usuarios', {
       usuario: 'supervisorvacio', nombre: 'Supervisor Inválido', rol: 'supervisor',
       todas_estaciones: false, estaciones: [],
@@ -447,9 +451,10 @@ server.listen(0, '127.0.0.1', async () => {
     assert.ok(bitacora.some((row) => row.usuario === 'supervisor1' && row.accion === 'DEBITO_ANULADO'));
     assert.ok(bitacora.some((row) => row.usuario === 'supervisor1' && row.accion === 'PAGO_ANULADO'));
     assert.ok(bitacora.some((row) => row.usuario === 'supervisor1' && row.accion === 'DESPACHO_EDITA'));
-    if (estaciones.length > 1) {
+    const estacionesNoAsignadas = estaciones.filter((stationId) => !asignadas.includes(stationId));
+    if (estacionesNoAsignadas.length) {
       const otro = (await call('a', 'POST', '/api/clientes', {
-        cliente: `Cliente Supervisor Fuera ${process.pid}`, estacion_id: estaciones[1], limite: 0, dias: 0,
+        cliente: `Cliente Supervisor Fuera ${process.pid}`, estacion_id: estacionesNoAsignadas[0], limite: 0, dias: 0,
       }));
       const fuera = await call('a', 'POST', '/api/por-facturar', {
         k_cliente: otro.data.k_cliente, importe: 15, fecha_despacho: '2026-10-25', despacho: `DESP-FUERA-${process.pid}`,

@@ -14,7 +14,7 @@
           <button type="button" class="btn small" data-estaciones-accion="ninguna">Limpiar</button>
         </div>
         ${S.cat.estaciones.length ? S.cat.estaciones.map((estacion) => html`<label class="estacion-opcion">
-          <input type="checkbox" name="estacion_seleccionada" value="${estacion.id}" data-estacion-opcion ${ids.includes(Number(estacion.id)) ? 'checked' : ''}>
+          <input type="checkbox" name="estaciones" value="${estacion.id}" data-estacion-opcion ${ids.includes(Number(estacion.id)) ? 'checked' : ''}>
           <span>${CG.esc(corto(estacion.nombre))}</span>
         </label>`) : html`<p class="mut">No hay estaciones disponibles.</p>`}
       </div>
@@ -47,8 +47,8 @@
       actualizar();
     }));
     actualizar();
-    return () => opciones.filter((opcion) => opcion.checked).map((opcion) => Number(opcion.value));
   };
+  const estacionesDelFormulario = (formData) => formData.getAll('estaciones').map(Number);
 
   // =============== CONTROL DE DÉBITO ===============
   CG.routes.debito = async () => {
@@ -726,7 +726,7 @@
         <label style="flex:1;min-width:200px">Correo electrónico<input name="email" type="email" maxlength="120"></label>
         <label style="width:200px">Rol *<select name="rol">${Object.entries(roles).map(([k, v]) => opt(k, v.etiqueta, 'gestor'))}</select></label>
         <div class="asignacion-estaciones"><label class="inline-check"><input type="checkbox" name="todas_estaciones" value="1" checked> Acceso a todas las estaciones</label>
-          <label>Estaciones asignadas${selectorEstacionesHtml()}</label></div>
+          <div class="estaciones-field"><span class="estaciones-label">Estaciones asignadas</span>${selectorEstacionesHtml()}</div></div>
         <button class="btn accent" type="submit">+ Agregar usuario</button><div class="err" id="uErr" style="flex-basis:100%"></div></form>
       <div class="tablewrap"><table><thead><tr><th>Nombre</th><th>Usuario</th><th>Correo</th><th>Rol</th><th>Estaciones asignadas</th><th>Último acceso</th><th>Estado</th><th></th></tr></thead><tbody>
       ${r.rows.map((u) => html`<tr><td><b>${u.nombre}</b></td><td>${u.usuario}</td><td>${u.email}</td><td><span class="badge ${u.rol === 'admin' ? 'b-pink' : ['gestor', 'supervisor'].includes(u.rol) ? 'b-info' : 'b-mut'}">${roles[u.rol] ? roles[u.rol].etiqueta : u.rol}</span></td><td class="usuarios-estaciones" title="${u.estaciones && u.estaciones.length ? u.estaciones.map((e) => e.nombre).join(', ') : 'Todas las estaciones'}">${u.estaciones && u.estaciones.length ? html`<div class="usuarios-estaciones-lista">${u.estaciones.map((e) => html`<span class="badge b-mut">${e.nombre}</span>`)}</div>` : 'Todas'}</td>
@@ -740,9 +740,12 @@
         <div class="card"><h3>Bitácora de actividad</h3><p class="mut">Registro de accesos, pagos, movimientos de débito, cambios de crédito, altas y cargas de datos.</p><a class="btn dark" href="#/bitacora">Ver bitácora</a></div></div>`);
     const formU = $('#formU');
     const todasEstacionesU = formU.querySelector('[name="todas_estaciones"]');
-    const estacionesSeleccionadasU = conectarSelectorEstaciones(formU);
+    conectarSelectorEstaciones(formU);
     formU.onsubmit = async (e) => {
-      e.preventDefault(); const b = Object.fromEntries(new FormData(e.target)); const estaciones = estacionesSeleccionadasU();
+      e.preventDefault();
+      const datosFormulario = new FormData(e.target);
+      const b = Object.fromEntries(datosFormulario);
+      const estaciones = estacionesDelFormulario(datosFormulario);
       if (!todasEstacionesU.checked && !estaciones.length) { $('#uErr').textContent = 'Selecciona al menos una estación o marca “Todas las estaciones”.'; return; }
       b.todas_estaciones = todasEstacionesU.checked; b.estaciones = estaciones; $('#uErr').textContent = '';
       try { const x = await api('/api/usuarios', { method: 'POST', body: b }); mostrarPassword('Usuario creado', b.usuario, x.password_temporal); CG.route(true); }
@@ -762,15 +765,18 @@
       <label>Correo<input name="email" type="email" value="${u.email || ''}"></label>
       <label>Rol<select name="rol">${Object.entries(S.cat.roles).map(([k, v]) => opt(k, v.etiqueta, u.rol))}</select></label>
       <label class="inline-check"><input type="checkbox" name="todas_estaciones" value="1" ${todas ? 'checked' : ''}> Acceso a todas las estaciones</label>
-      <label>Estaciones asignadas${selectorEstacionesHtml(prev)}</label>
+      <div class="estaciones-field"><span class="estaciones-label">Estaciones asignadas</span>${selectorEstacionesHtml(prev)}</div>
       <label>Estado<select name="activo">${opt('1', 'Activo', u.activo)}${opt('0', 'Inactivo', u.activo)}</select></label>
       <div class="full err" id="ueErr"></div>
       <div class="full actions"><button type="button" class="btn" data-act="cerrar">Cancelar</button><button class="btn accent">Guardar</button></div></form>`);
     const formUE = $('#formUE');
     const todasEstacionesUE = formUE.querySelector('[name="todas_estaciones"]');
-    const estacionesSeleccionadasUE = conectarSelectorEstaciones(formUE);
+    conectarSelectorEstaciones(formUE);
     formUE.onsubmit = async (e) => {
-      e.preventDefault(); const b = Object.fromEntries(new FormData(e.target)); const estaciones = estacionesSeleccionadasUE();
+      e.preventDefault();
+      const datosFormulario = new FormData(e.target);
+      const b = Object.fromEntries(datosFormulario);
+      const estaciones = estacionesDelFormulario(datosFormulario);
       if (!todasEstacionesUE.checked && !estaciones.length) { $('#ueErr').textContent = 'Selecciona al menos una estación o marca “Todas las estaciones”.'; return; }
       b.todas_estaciones = todasEstacionesUE.checked; b.estaciones = estaciones; b.activo = b.activo === '1';
       try { await api('/api/usuarios/' + u.id, { method: 'PUT', body: b }); toast('Usuario actualizado'); closeModal(); CG.route(true); }
