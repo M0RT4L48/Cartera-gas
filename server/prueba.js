@@ -363,6 +363,94 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal((await call('l', 'POST', '/api/clientes', { cliente: 'x' })).status, 403);
     assert.equal((await call('l', 'PUT', '/api/bancos/1', { nombre: 'Banco No Autorizado' })).status, 403);
   });
+  await t('supervisor: permisos específicos y asignación múltiple de estaciones', async () => {
+    const estaciones = (await call('a', 'GET', '/api/catalogos')).data.estaciones.map((station) => station.id);
+    assert.ok(estaciones.length >= 2, 'Se requieren dos estaciones para probar la asignación múltiple');
+    const asignadas = estaciones.slice(0, 2);
+    const supervisorAlta = await call('a', 'POST', '/api/usuarios', {
+      usuario: 'supervisor1', nombre: 'Supervisor Uno', rol: 'supervisor',
+      todas_estaciones: false, estaciones: asignadas,
+    });
+    assert.equal(supervisorAlta.status, 201, JSON.stringify(supervisorAlta.data));
+    const supervisor = (await call('a', 'GET', '/api/usuarios')).data.rows.find((row) => row.usuario === 'supervisor1');
+    assert.deepEqual(supervisor.estaciones.map((station) => station.id), asignadas);
+    assert.equal((await call('a', 'PUT', '/api/usuarios/' + supervisor.id, {
+      rol: 'supervisor', activo: true, todas_estaciones: false, estaciones: [asignadas[0]],
+    })).status, 200);
+    const editado = (await call('a', 'GET', '/api/usuarios')).data.rows.find((row) => row.id === supervisor.id);
+    assert.deepEqual(editado.estaciones.map((station) => station.id), [asignadas[0]]);
+    assert.equal((await call('a', 'POST', '/api/usuarios', {
+      usuario: 'supervisorvacio', nombre: 'Supervisor Inválido', rol: 'supervisor',
+      todas_estaciones: false, estaciones: [],
+    })).status, 400);
+    const all = await call('a', 'POST', '/api/usuarios', {
+      usuario: 'supervisorall', nombre: 'Supervisor Todas', rol: 'supervisor', todas_estaciones: true, estaciones: [],
+    });
+    assert.equal(all.status, 201, JSON.stringify(all.data));
+    const allListed = (await call('a', 'GET', '/api/usuarios')).data.rows.find((row) => row.usuario === 'supervisorall');
+    assert.deepEqual(allListed.estaciones, []);
+
+    const login = await call('s', 'POST', '/api/login', { usuario: 'supervisor1', password: supervisorAlta.data.password_temporal });
+    assert.equal(login.status, 200);
+    assert.equal((await call('s', 'POST', '/api/cambiar-password', {
+      actual: supervisorAlta.data.password_temporal, nueva: 'Supervisor2026x',
+    })).status, 200);
+    const profile = (await call('s', 'GET', '/api/me')).data;
+    for (const permission of ['anular_prepago', 'editar_despacho', 'anular_pago']) assert.ok(profile.permisos.includes(permission));
+    for (const permission of ['pagos', 'debito', 'facturas', 'usuarios']) assert.ok(!profile.permisos.includes(permission));
+    assert.equal((await call('s', 'GET', '/api/usuarios')).status, 403);
+    assert.equal((await call('s', 'POST', '/api/pagos', { k_cliente: cliPagos.k_cliente })).status, 403);
+    assert.equal((await call('s', 'POST', '/api/debito/movimientos', { k_cliente: cliPagos.k_cliente })).status, 403);
+
+    const k = (await call('a', 'POST', '/api/clientes', {
+      cliente: `Cliente Supervisor ${process.pid}`, estacion_id: asignadas[0], limite: 0, dias: 0,
+    })).data.k_cliente;
+    const pendiente = await call('a', 'POST', '/api/por-facturar', {
+      k_cliente: k, importe: 80, fecha_despacho: '2026-10-25', despacho: `DESP-SUP-${process.pid}`,
+    });
+    assert.equal(pendiente.status, 201, JSON.stringify(pendiente.data));
+    const edicionDespacho = await call('s', 'PUT', '/api/por-facturar/' + (2000000000 + pendiente.data.id), {
+      fecha_despacho: '2026-10-26', despacho: `DESP-SUP-${process.pid}`, grupo: 'SUPERVISOR', monto: 95,
+    });
+    assert.equal(edicionDespacho.status, 200, JSON.stringify(edicionDespacho.data));
+
+    const abono = await call('a', 'POST', '/api/debito/movimientos', {
+      k_cliente: k, tipo: 'ABONO', monto: 100, fecha: '2026-10-25', folio: `ABONO-SUP-${process.pid}`, metodo: 'Efectivo',
+    });
+    assert.equal(abono.status, 201, JSON.stringify(abono.data));
+    assert.equal((await call('s', 'DELETE', '/api/debito/movimientos/' + abono.data.id)).status, 200);
+    const consumo = await call('a', 'POST', '/api/debito/movimientos', {
+      k_cliente: k, tipo: 'CONSUMO', monto: 20, fecha: '2026-10-25', folio: `CONSUMO-SUP-${process.pid}`,
+    });
+    assert.equal(consumo.status, 201, JSON.stringify(consumo.data));
+    assert.equal((await call('s', 'DELETE', '/api/debito/movimientos/' + consumo.data.id)).status, 403);
+
+    const factura = await call('a', 'POST', '/api/cartera/facturas', {
+      k_cliente: k, no_factura: `FAC-SUP-${process.pid}`, importe: 200, fecha_factura: '2026-10-25',
+    });
+    assert.equal(factura.status, 201, JSON.stringify(factura.data));
+    const pago = await call('a', 'POST', '/api/pagos', {
+      k_cliente: k, estacion_id: asignadas[0], no_factura: factura.data.no_factura,
+      monto: 50, fecha: '2026-10-26', metodo: 'Efectivo',
+    });
+    assert.equal(pago.status, 201, JSON.stringify(pago.data));
+    assert.equal((await call('s', 'DELETE', '/api/pagos/' + pago.data.ids[0])).status, 200);
+    const bitacora = (await call('a', 'GET', '/api/bitacora')).data.rows;
+    assert.ok(bitacora.some((row) => row.usuario === 'supervisor1' && row.accion === 'DEBITO_ANULADO'));
+    assert.ok(bitacora.some((row) => row.usuario === 'supervisor1' && row.accion === 'PAGO_ANULADO'));
+    assert.ok(bitacora.some((row) => row.usuario === 'supervisor1' && row.accion === 'DESPACHO_EDITA'));
+    if (estaciones.length > 1) {
+      const otro = (await call('a', 'POST', '/api/clientes', {
+        cliente: `Cliente Supervisor Fuera ${process.pid}`, estacion_id: estaciones[1], limite: 0, dias: 0,
+      }));
+      const fuera = await call('a', 'POST', '/api/por-facturar', {
+        k_cliente: otro.data.k_cliente, importe: 15, fecha_despacho: '2026-10-25', despacho: `DESP-FUERA-${process.pid}`,
+      });
+      assert.equal((await call('s', 'PUT', '/api/por-facturar/' + (2000000000 + fuera.data.id), {
+        fecha_despacho: '2026-10-26', despacho: `DESP-FUERA-${process.pid}`, grupo: '', monto: 20,
+      })).status, 403);
+    }
+  });
   await t('desactivar usuario cierra su sesión; no se puede dejar sin admin', async () => {
     assert.equal((await call('a', 'PUT', '/api/usuarios/' + id, { activo: false })).status, 200);
     assert.equal((await call('g', 'GET', '/api/dashboard')).status, 401);

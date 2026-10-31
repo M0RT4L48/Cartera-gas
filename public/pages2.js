@@ -30,7 +30,7 @@
             <div class="tablewrap debito-table-scroll" role="region" aria-label="Movimientos de prepago" tabindex="0" style="border:0;border-radius:0;max-height:320px"><table class="debito-movimientos-table"><thead><tr><th>Fecha</th><th>Cliente</th><th>Operación</th><th>Método</th><th>Banco</th><th>Folio</th><th class="n">Monto</th><th></th></tr></thead><tbody>
             ${mv.rows.length ? mv.rows.map((m) => { const ab = m.abono > 0; return html`<tr><td>${fdate(m.fecha)}</td><td class="wrap">${m.cliente}</td><td>${badge(m.tipo)}</td>
               <td>${m.metodo || ''}</td><td>${m.banco || ''}</td><td>${m.folio}</td><td class="n strong ${ab ? 'pos' : ''}">${ab ? '+' : '−'}${money(ab ? m.abono : m.importe, 2)}</td>
-              <td>${m.origen === 'app' && puedeEscribir ? html`<button class="btn small danger" data-act="anularDeb" data-id="${m.id}">Anular</button>` : ''}</td></tr>`; })
+              <td>${m.origen === 'app' && (puedeEscribir || can('anular_prepago') && ab) ? html`<button class="btn small danger" data-act="anularDeb" data-id="${m.id}">Anular prepago</button>` : ''}</td></tr>`; })
               : html`<tr><td colspan="8" class="empty">Sin movimientos.</td></tr>`}</tbody></table></div>
             ${pager(st, mv.total, mv.size)}</div>`.s;
       } catch (e) { $('#debSaldos').innerHTML = html`<div class="note">${e.message}</div>`.s; }
@@ -396,6 +396,8 @@
   // =============== POR FACTURAR ===============
   CG.routes['por-facturar'] = async () => {
     const st = { q: '' };
+    const puedeFacturar = can('facturas');
+    const puedeEditarDespacho = can('editar_despacho');
     let lista = [];
     try { lista = await CG.clientesLista(false); } catch (e) { return errorView(e); }
     const pick = clientePicker('porfact-cliente', lista, { placeholder: 'Selecciona un cliente…' });
@@ -408,7 +410,7 @@
           <div class="tablewrap"><table><thead><tr><th>Cliente</th><th>Estación</th><th class="n">Despachos</th><th class="n">Importe</th><th>Más antiguo</th><th>Más reciente</th><th class="n">Antigüedad (días)</th><th></th></tr></thead><tbody>
           ${r.rows.length ? r.rows.map((x) => html`<tr class="click" data-go="#/cliente/${encodeURIComponent(x.k_cliente)}"><td class="wrap">${x.cliente}</td><td>${corto(x.estacion)}</td><td class="n">${x.despachos}</td>
             <td class="n strong">${money(x.monto)}</td><td>${fdate(x.mas_antiguo)}</td><td>${fdate(x.mas_reciente)}</td><td class="n ${x.dias_antiguedad > 15 ? 'neg' : ''}">${x.dias_antiguedad}</td>
-            <td>${can('facturas') ? html`<button class="btn small" data-act="emitirFacturaCliente" data-k="${x.k_cliente}" data-cliente="${x.cliente}">Seleccionar despachos</button>` : ''}</td></tr>`) : html`<tr><td colspan="8" class="empty">Sin despachos por facturar.</td></tr>`}</tbody></table></div>`.s;
+            <td>${puedeFacturar || puedeEditarDespacho ? html`<button class="btn small" data-act="emitirFacturaCliente" data-k="${x.k_cliente}" data-cliente="${x.cliente}">${puedeFacturar ? 'Seleccionar despachos' : 'Modificar importes'}</button>` : ''}</td></tr>`) : html`<tr><td colspan="8" class="empty">Sin despachos por facturar.</td></tr>`}</tbody></table></div>`.s;
       } catch (e) { $('#tbl').innerHTML = html`<div class="note">${e.message}</div>`.s; }
     };
     setView(html`<div class="h"><h2>Despachos por Facturar</h2><p>Despachos a crédito que aún no tienen factura emitida. También puedes registrar un monto de crédito pendiente para un cliente concreto.</p></div>
@@ -474,6 +476,9 @@
     bindFilters($('#filtros'), st, load); load();
   };
   CG.acts.emitirFacturaCliente = async (el) => {
+    const puedeFacturar = can('facturas');
+    const puedeEditarDespacho = can('editar_despacho');
+    if (!puedeFacturar && !puedeEditarDespacho) { toast('No tienes permiso para esta acción.', 'bad'); return; }
     const cliente = String(el.dataset.cliente || 'Cliente');
     const k = el.dataset.k;
     let pendientes;
@@ -483,19 +488,19 @@
     } catch (e) { toast(e.message, 'bad'); return; }
     if (!pendientes.length) { toast('Este cliente no tiene despachos pendientes de facturar.', 'warn'); await CG.route(true); return; }
     modal(html`
-      <h2>Seleccionar despachos para facturar</h2>
+      <h2>${puedeFacturar ? 'Seleccionar despachos para facturar' : 'Modificar despachos pendientes'}</h2>
       <form id="formEmitirFacturaCliente" class="form">
         <label>Cliente<input value="${cliente}" readonly></label>
-        <label>Folio / No. factura<input name="no_factura" maxlength="80" required></label>
-        <label>Fecha de factura<input name="fecha_factura" type="date" max="${hoyLocal()}" value="${hoyLocal()}" required></label>
-        <div class="full tablewrap nomax"><table><thead><tr><th><input type="checkbox" id="seleccionarTodosDespachos" checked aria-label="Seleccionar todos los despachos"></th><th>Fecha</th><th>Despacho</th><th>Grupo</th><th class="n">Pendiente</th><th></th></tr></thead><tbody id="despachosEmitir">
-          ${pendientes.map((d) => html`<tr><td><input type="checkbox" name="despacho_id" value="${d.id}" data-monto="${Math.max(0, d.monto)}" checked></td>
+        ${puedeFacturar ? html`<label>Folio / No. factura<input name="no_factura" maxlength="80" required></label>
+          <label>Fecha de factura<input name="fecha_factura" type="date" max="${hoyLocal()}" value="${hoyLocal()}" required></label>` : ''}
+        <div class="full tablewrap nomax"><table><thead><tr><th>${puedeFacturar ? html`<input type="checkbox" id="seleccionarTodosDespachos" checked aria-label="Seleccionar todos los despachos">` : ''}</th><th>Fecha</th><th>Despacho</th><th>Grupo</th><th class="n">Pendiente</th><th></th></tr></thead><tbody id="despachosEmitir">
+          ${pendientes.map((d) => html`<tr><td>${puedeFacturar ? html`<input type="checkbox" name="despacho_id" value="${d.id}" data-monto="${Math.max(0, d.monto)}" checked>` : ''}</td>
             <td>${fdate(d.fecha_despacho)}</td><td>${d.despacho || ''}</td><td>${d.grupo || ''}</td><td class="n">${money(d.monto, 2)}</td>
-            <td><button type="button" class="btn small" data-despacho-action="editar" data-id="${d.id}" aria-label="Editar despacho ${d.despacho || ''}" title="Editar despacho">
-              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg></button></td></tr>`)}</tbody>
-          <tfoot><tr><td colspan="4">Total seleccionado</td><td class="n strong" id="totalSeleccionado"></td><td></td></tr></tfoot></table></div>
+            <td>${puedeEditarDespacho ? html`<button type="button" class="btn small" data-despacho-action="editar" data-id="${d.id}" aria-label="Editar despacho ${d.despacho || ''}" title="Editar despacho">
+              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg></button>` : ''}</td></tr>`)}</tbody>
+          ${puedeFacturar ? html`<tfoot><tr><td colspan="4">Total seleccionado</td><td class="n strong" id="totalSeleccionado"></td><td></td></tr></tfoot>` : ''}</table></div>
         <div class="full err" id="emitirFacturaErr"></div>
-        <div class="full actions"><button type="button" class="btn" data-act="cerrar">Cancelar</button><button type="submit" class="btn dark">Emitir factura</button></div>
+        <div class="full actions"><button type="button" class="btn" data-act="cerrar">Cerrar</button>${puedeFacturar ? html`<button type="submit" class="btn dark">Emitir factura</button>` : ''}</div>
       </form>`, { wide: true });
     const form = $('#formEmitirFacturaCliente');
     const checks = () => [...form.querySelectorAll('input[name="despacho_id"]')];
@@ -515,7 +520,7 @@
       boton.innerHTML = '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg>';
       celdas[5].replaceChildren(boton);
       const checkbox = celdas[0].querySelector('input');
-      checkbox.dataset.monto = String(despacho.monto);
+      if (checkbox) checkbox.dataset.monto = String(despacho.monto);
     };
     const inputCelda = (cell, type, value, { maxLength, min, step, max, required } = {}) => {
       const input = document.createElement('input');
@@ -579,17 +584,19 @@
       if (event.key === 'Enter' && event.target.matches('input')) event.preventDefault();
     });
     const updateTotal = () => {
+      if (!puedeFacturar) return;
       const total = checks().filter((c) => c.checked).reduce((sum, c) => sum + Number(c.dataset.monto), 0);
       $('#totalSeleccionado').textContent = money(total, 2);
       const all = checks();
       $('#seleccionarTodosDespachos').checked = all.length > 0 && all.every((c) => c.checked);
       $('#seleccionarTodosDespachos').indeterminate = all.some((c) => c.checked) && !all.every((c) => c.checked);
     };
-    $('#seleccionarTodosDespachos').onchange = (e) => { checks().forEach((c) => { c.checked = e.target.checked; }); updateTotal(); };
+    if (puedeFacturar) $('#seleccionarTodosDespachos').onchange = (e) => { checks().forEach((c) => { c.checked = e.target.checked; }); updateTotal(); };
     $('#despachosEmitir').onchange = updateTotal;
     updateTotal();
     form.onsubmit = async (e) => {
       e.preventDefault();
+      if (!puedeFacturar) return;
       $('#emitirFacturaErr').textContent = '';
       const payload = Object.fromEntries(new FormData(form).entries());
       const ids = checks().filter((c) => c.checked).map((c) => Number(c.value));
@@ -626,7 +633,7 @@
           <div class="tablewrap"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Estación</th><th>Factura</th><th>Método</th><th>Banco</th><th>Referencia</th><th class="n">Monto</th><th>Registró</th><th>Estado</th><th></th></tr></thead><tbody>
           ${p.rows.length ? p.rows.map((x) => html`<tr><td>${fdate(x.fecha)}</td><td class="wrap"><a href="#/cliente/${encodeURIComponent(x.k_cliente)}">${x.cliente}</a></td><td>${corto(x.estacion)}</td><td>${x.sin_aplicar ? html`<span class="badge b-warn">Sin aplicar</span>` : x.no_factura}</td><td>${x.metodo}</td>
             <td>${x.banco || ''}</td><td>${x.referencia}</td><td class="n strong">${money(x.monto, 2)}</td><td>${x.usuario}</td><td>${x.anulado ? badge('Cerrada') : x.conciliado ? html`<span class="badge b-mut">Conciliado</span>` : x.sin_aplicar ? html`<span class="badge b-warn">Pendiente de asignar</span>` : html`<span class="badge b-ok">Aplicado</span>`}</td>
-            <td>${!x.anulado && !x.conciliado && can('pagos') ? html`<button class="btn small danger" data-act="anularPago" data-id="${x.id}">Anular</button>` : ''}</td></tr>`) : html`<tr><td colspan="11" class="empty">Sin pagos capturados.</td></tr>`}</tbody></table></div>`);
+            <td>${!x.anulado && !x.conciliado && (can('pagos') || can('anular_pago')) ? html`<button class="btn small danger" data-act="anularPago" data-id="${x.id}">Anular pago</button>` : ''}</td></tr>`) : html`<tr><td colspan="11" class="empty">Sin pagos capturados.</td></tr>`}</tbody></table></div>`);
       }
     } catch (e) { errorView(e); }
     $('#view').onclick = (e) => { const t = e.target.closest('[data-ct]'); if (t) { cobTab = t.dataset.ct; CG.routes.cobranza(); } };
@@ -672,20 +679,27 @@
         <label style="width:150px">Usuario (acceso) *<input name="usuario" required pattern="[a-z0-9._-]{3,40}" placeholder="ej. jperez" title="3-40 caracteres: minúsculas, números, . _ -"></label>
         <label style="flex:1;min-width:200px">Correo electrónico<input name="email" type="email" maxlength="120"></label>
         <label style="width:200px">Rol *<select name="rol">${Object.entries(roles).map(([k, v]) => opt(k, v.etiqueta, 'gestor'))}</select></label>
-        <label style="width:260px">Estaciones asignadas<select name="estaciones" multiple size="${Math.min(6, S.cat.estaciones.length || 1)}">${S.cat.estaciones.map((e) => html`<option value="${e.id}">${CG.esc(corto(e.nombre))}</option>`)}</select></label>
+        <div style="width:260px"><label class="inline-check"><input type="checkbox" name="todas_estaciones" value="1" checked> Todas las estaciones</label>
+          <label>Estaciones asignadas<select name="estaciones" multiple size="${Math.min(6, S.cat.estaciones.length || 1)}" disabled>${S.cat.estaciones.map((e) => html`<option value="${e.id}">${CG.esc(corto(e.nombre))}</option>`)}</select></label></div>
         <button class="btn accent" type="submit">+ Agregar usuario</button><div class="err" id="uErr" style="flex-basis:100%"></div></form>
       <div class="tablewrap"><table><thead><tr><th>Nombre</th><th>Usuario</th><th>Correo</th><th>Rol</th><th>Estaciones asignadas</th><th>Último acceso</th><th>Estado</th><th></th></tr></thead><tbody>
-      ${r.rows.map((u) => html`<tr><td><b>${u.nombre}</b></td><td>${u.usuario}</td><td>${u.email}</td><td><span class="badge ${u.rol === 'admin' ? 'b-pink' : u.rol === 'gestor' ? 'b-info' : 'b-mut'}">${roles[u.rol] ? roles[u.rol].etiqueta : u.rol}</span></td><td>${u.estaciones && u.estaciones.length ? u.estaciones.map((e) => corto(e.nombre)).join(', ') : 'Todas'}</td>
+      ${r.rows.map((u) => html`<tr><td><b>${u.nombre}</b></td><td>${u.usuario}</td><td>${u.email}</td><td><span class="badge ${u.rol === 'admin' ? 'b-pink' : ['gestor', 'supervisor'].includes(u.rol) ? 'b-info' : 'b-mut'}">${roles[u.rol] ? roles[u.rol].etiqueta : u.rol}</span></td><td>${u.estaciones && u.estaciones.length ? u.estaciones.map((e) => corto(e.nombre)).join(', ') : 'Todas'}</td>
         <td>${u.ultimo_login ? u.ultimo_login.slice(0, 16).replace('T', ' ') : '—'}</td><td>${u.activo ? html`<span class="badge b-ok">Activo</span>` : html`<span class="badge b-mut">Inactivo</span>`}</td>
         <td><button class="btn small" data-act="editUsuario" data-u="${JSON.stringify(u)}">Editar</button> <button class="btn small" data-act="resetUsuario" data-id="${u.id}" data-name="${u.usuario}">Restablecer contraseña</button></td></tr>`)}</tbody></table></div>
       <div class="grid g2" style="margin-top:18px"><div class="card"><h3>Permisos por rol</h3><div class="tablewrap nomax" style="border:0"><table><tbody>
         <tr><td><b>Administrador General</b></td><td class="wrap">Todo: consultar, registrar abonos y consumos de débito, aplicar pagos, gestionar clientes y crédito, administrar usuarios, cargar el Excel y ver la bitácora.</td></tr>
         <tr><td><b>Gestor de Estación</b></td><td class="wrap">Consultar, exportar, registrar débito y pagos, gestiones de cobranza, altas de clientes y edición de crédito (dentro de su estación).</td></tr>
+        <tr><td><b>Supervisor</b></td><td class="wrap">Puede anular prepagos, modificar importes de despachos pendientes y anular pagos dentro de sus estaciones asignadas; no registra pagos ni administra usuarios.</td></tr>
         <tr><td><b>Consulta</b></td><td class="wrap">Solo lectura y exportación.</td></tr></tbody></table></div></div>
         <div class="card"><h3>Bitácora de actividad</h3><p class="mut">Registro de accesos, pagos, movimientos de débito, cambios de crédito, altas y cargas de datos.</p><a class="btn dark" href="#/bitacora">Ver bitácora</a></div></div>`);
-    $('#formU').onsubmit = async (e) => {
-      e.preventDefault(); const b = Object.fromEntries(new FormData(e.target)); const estaciones = [...e.target.querySelectorAll('select[name="estaciones"] option:checked')].map((o) => Number(o.value)).filter((n) => Number.isInteger(n) && n > 0);
-      b.estaciones = estaciones; $('#uErr').textContent = '';
+    const formU = $('#formU');
+    const todasEstacionesU = formU.querySelector('[name="todas_estaciones"]');
+    const selectEstacionesU = formU.querySelector('[name="estaciones"]');
+    todasEstacionesU.addEventListener('change', () => { selectEstacionesU.disabled = todasEstacionesU.checked; });
+    formU.onsubmit = async (e) => {
+      e.preventDefault(); const b = Object.fromEntries(new FormData(e.target)); const estaciones = [...selectEstacionesU.selectedOptions].map((o) => Number(o.value)).filter((n) => Number.isInteger(n) && n > 0);
+      if (!todasEstacionesU.checked && !estaciones.length) { $('#uErr').textContent = 'Selecciona al menos una estación o marca “Todas las estaciones”.'; return; }
+      b.todas_estaciones = todasEstacionesU.checked; b.estaciones = estaciones; $('#uErr').textContent = '';
       try { const x = await api('/api/usuarios', { method: 'POST', body: b }); mostrarPassword('Usuario creado', b.usuario, x.password_temporal); CG.route(true); }
       catch (er) { $('#uErr').textContent = er.message; }
     };
@@ -697,16 +711,24 @@
   CG.acts.editUsuario = (el) => {
     const u = JSON.parse(el.dataset.u);
     const prev = Array.isArray(u.estaciones) ? u.estaciones.map((e) => Number(e.id || e)) : [];
+    const todas = prev.length === 0;
     modal(html`<h2>Editar usuario · ${u.usuario}</h2><form id="formUE" class="form">
       <label>Nombre completo<input name="nombre" value="${u.nombre}" required></label>
       <label>Correo<input name="email" type="email" value="${u.email || ''}"></label>
       <label>Rol<select name="rol">${Object.entries(S.cat.roles).map(([k, v]) => opt(k, v.etiqueta, u.rol))}</select></label>
-      <label>Estaciones asignadas<select name="estaciones" multiple size="${Math.min(6, S.cat.estaciones.length || 1)}">${S.cat.estaciones.map((e) => opt(e.id, corto(e.nombre), prev.includes(e.id) ? e.id : ''))}</select></label>
+      <label class="inline-check"><input type="checkbox" name="todas_estaciones" value="1" ${todas ? 'checked' : ''}> Todas las estaciones</label>
+      <label>Estaciones asignadas<select name="estaciones" multiple size="${Math.min(6, S.cat.estaciones.length || 1)}" ${todas ? 'disabled' : ''}>${S.cat.estaciones.map((e) => opt(e.id, corto(e.nombre), prev.includes(e.id) ? e.id : ''))}</select></label>
       <label>Estado<select name="activo">${opt('1', 'Activo', u.activo)}${opt('0', 'Inactivo', u.activo)}</select></label>
       <div class="full err" id="ueErr"></div>
       <div class="full actions"><button type="button" class="btn" data-act="cerrar">Cancelar</button><button class="btn accent">Guardar</button></div></form>`);
-    $('#formUE').onsubmit = async (e) => {
-      e.preventDefault(); const b = Object.fromEntries(new FormData(e.target)); const estaciones = [...e.target.querySelectorAll('select[name="estaciones"] option:checked')].map((o) => Number(o.value)).filter((n) => Number.isInteger(n) && n > 0); b.estaciones = estaciones; b.activo = b.activo === '1';
+    const formUE = $('#formUE');
+    const todasEstacionesUE = formUE.querySelector('[name="todas_estaciones"]');
+    const selectEstacionesUE = formUE.querySelector('[name="estaciones"]');
+    todasEstacionesUE.addEventListener('change', () => { selectEstacionesUE.disabled = todasEstacionesUE.checked; });
+    formUE.onsubmit = async (e) => {
+      e.preventDefault(); const b = Object.fromEntries(new FormData(e.target)); const estaciones = [...selectEstacionesUE.selectedOptions].map((o) => Number(o.value)).filter((n) => Number.isInteger(n) && n > 0);
+      if (!todasEstacionesUE.checked && !estaciones.length) { $('#ueErr').textContent = 'Selecciona al menos una estación o marca “Todas las estaciones”.'; return; }
+      b.todas_estaciones = todasEstacionesUE.checked; b.estaciones = estaciones; b.activo = b.activo === '1';
       try { await api('/api/usuarios/' + u.id, { method: 'PUT', body: b }); toast('Usuario actualizado'); closeModal(); CG.route(true); }
       catch (er) { $('#ueErr').textContent = er.message; }
     };

@@ -90,8 +90,8 @@ CREATE TABLE IF NOT EXISTS usuarios (
   usuario         TEXT NOT NULL UNIQUE COLLATE NOCASE,
   nombre          TEXT NOT NULL,
   email           TEXT,
-  rol             TEXT NOT NULL DEFAULT 'consulta',   -- admin | gestor | consulta
-  estacion_id     INTEGER,                            -- NULL = todas las estaciones; legacy: primer estación asignada
+  rol             TEXT NOT NULL DEFAULT 'consulta',   -- admin | gestor | supervisor | consulta
+  estacion_id     INTEGER,                            -- Estación heredada/primera asignada; el alcance se calcula con usuario_estaciones
   activo          INTEGER NOT NULL DEFAULT 1,
   must_change     INTEGER NOT NULL DEFAULT 1,
   pass_hash       TEXT NOT NULL,
@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS usuario_estaciones (
   usuario_id  INTEGER NOT NULL,
   estacion_id INTEGER NOT NULL,
   PRIMARY KEY (usuario_id, estacion_id)
+  -- Si no hay filas ni estacion_id heredado, el usuario tiene acceso a todas las estaciones.
 );
 CREATE TABLE IF NOT EXISTS sesiones (
   token_hash TEXT PRIMARY KEY,

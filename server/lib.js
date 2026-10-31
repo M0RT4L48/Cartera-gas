@@ -76,9 +76,10 @@ const ready = (async () => {
 
 // ---------------- Roles y permisos ----------------
 const ROLES = {
-  admin:    { etiqueta: 'Administrador General', permisos: ['ver', 'pagos', 'gestiones', 'credito', 'clientes', 'facturas', 'debito', 'usuarios', 'bitacora', 'carga', 'export'] },
-  gestor:   { etiqueta: 'Gestor de Estación',    permisos: ['ver', 'pagos', 'gestiones', 'credito', 'clientes', 'facturas', 'debito', 'export'] },
-  consulta: { etiqueta: 'Consulta',              permisos: ['ver', 'export'] },
+  admin:      { etiqueta: 'Administrador General', permisos: ['ver', 'pagos', 'gestiones', 'credito', 'clientes', 'facturas', 'debito', 'usuarios', 'bitacora', 'carga', 'export', 'anular_prepago', 'editar_despacho', 'anular_pago'] },
+  gestor:     { etiqueta: 'Gestor de Estación',    permisos: ['ver', 'pagos', 'gestiones', 'credito', 'clientes', 'facturas', 'debito', 'export'] },
+  supervisor: { etiqueta: 'Supervisor',            permisos: ['ver', 'anular_prepago', 'editar_despacho', 'anular_pago'] },
+  consulta:   { etiqueta: 'Consulta',              permisos: ['ver', 'export'] },
 };
 const can = (user, permiso) => !!user && !!ROLES[user.rol] && ROLES[user.rol].permisos.includes(permiso);
 

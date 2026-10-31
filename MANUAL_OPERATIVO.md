@@ -48,7 +48,10 @@ El sistema implementa control de acceso basado en roles (RBAC) con alcance por e
 |---|---|---|
 | **Administrador General** | Acceso a todas o estaciones específicas | Acceso total: Usuarios, bitácora de auditoría, carga y reemplazo de Excel, catálogos maestros (bancos, métodos), clientes, crédito, facturas, cobros y débito. |
 | **Gestor de Estación** | Limitado a una o varias estaciones asignadas | Operación diaria en sus estaciones: Registrar facturas, aplicar cobros, movimientos de débito prepago, dar de alta clientes y editar condiciones de crédito, y registrar gestiones de cobranza. |
+| **Supervisor** | Limitado a una o varias estaciones asignadas | Puede anular prepagos, modificar importes de despachos pendientes y anular pagos; no puede registrar pagos o movimientos ni administrar usuarios. |
 | **Consulta** | Global o por estación | Solo lectura: Visualización de indicadores, reportes, fichas y exportación de tablas a formato CSV. |
+
+Al crear o editar usuarios, marca **Todas las estaciones** para acceso global o desmárcala y selecciona una o varias estaciones. Debe seleccionarse al menos una estación en el modo específico. Las estaciones se guardan en la relación `usuario_estaciones`.
 
 ---
 
@@ -96,7 +99,7 @@ flowchart TD
    - Asegurarse de que cada cliente esté registrado con su estación correspondiente, RFC, correo, teléfono, **límite de crédito ($)** y **días de crédito**.
    - *Nota:* Sin días de crédito, no se pueden proyectar vencimientos automáticos.
 4. **Alta de Usuarios Operativos (Pestaña *Usuarios y Roles*):**
-   - Crear los usuarios de tipo *Gestor de Estación* asignándoles únicamente las gasolineras que deben administrar.
+   - Asignar a cada usuario el rol que corresponda y limitarlo a las estaciones que debe operar; usa *Supervisor* para las tres acciones de anulación/edición específicas.
 
 ---
 

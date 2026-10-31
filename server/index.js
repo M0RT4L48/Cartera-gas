@@ -18,7 +18,10 @@ function estacionesAsignadas(user) {
   return [];
 }
 async function parseEstaciones(body) {
+  const tieneTodas = Object.prototype.hasOwnProperty.call(body, 'todas_estaciones');
+  if (tieneTodas && (body.todas_estaciones === true || body.todas_estaciones === 1 || body.todas_estaciones === 'true' || body.todas_estaciones === '1')) return [];
   const raw = Array.isArray(body.estaciones) ? body.estaciones : [];
+  if (tieneTodas && raw.length === 0) throw new HttpError(400, 'Selecciona al menos una estación o marca “Todas las estaciones”');
   const arr = raw.length ? raw : (body.estacion_id == null ? [] : [body.estacion_id]);
   const ids = [...new Set(arr.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0))];
   for (const id of ids) {
@@ -411,7 +414,7 @@ async function api(req, res, url) {
       const rows = await q.all(`SELECT u.id,u.usuario,u.nombre,u.email,u.rol,u.estacion_id,u.activo,u.ultimo_login,u.creado
         FROM usuarios u ORDER BY u.usuario`);
       return send(res, 200, { rows: await Promise.all(rows.map(async (u) => {
-        const ids = estacionesAsignadas(u);
+        const ids = await L.estacionesUsuario(u);
         const estaciones = ids.length ? await q.all('SELECT e.id, e.nombre FROM dim_estacion e WHERE e.id IN (' + ids.map(() => '?').join(',') + ') ORDER BY e.nombre', ...ids) : [];
         const estacion = estaciones[0] ? estaciones[0].nombre : (u.estacion_id ? (await q.get('SELECT nombre FROM dim_estacion WHERE id=?', u.estacion_id))?.nombre : null);
         return { ...u, estaciones, estacion: estacion || 'Todas' };
@@ -489,7 +492,7 @@ async function api(req, res, url) {
   }
 
   if (m === 'PUT' && (mt = p.match(/^\/api\/por-facturar\/(\d+)$/))) {
-    exigir(user, 'facturas');
+    if (!can(user, 'facturas') && !can(user, 'editar_despacho')) throw new HttpError(403, 'No tienes permiso para esta acción');
     const id = Number(mt[1]);
     if (!Number.isSafeInteger(id) || id <= 0) throw new HttpError(400, 'Identificador de despacho inválido');
     const despachoActual = await q.get(`SELECT id,origen,k_cliente,estacion_id,fecha_despacho,despacho,grupo,importe,abono,estatus
@@ -650,13 +653,13 @@ async function api(req, res, url) {
     });
   }
   if (m === 'DELETE' && (mt = p.match(/^\/api\/pagos\/(\d+)$/))) {
-    exigir(user, 'pagos');
+    if (!can(user, 'pagos') && !can(user, 'anular_pago')) throw new HttpError(403, 'No tienes permiso para esta acción');
     const pg = await q.get('SELECT * FROM pagos WHERE id=?', Number(mt[1]));
     if (!pg) throw new HttpError(404, 'Pago no encontrado');
     const idsPg = estacionesAsignadas(user);
     if (idsPg.length && !idsPg.includes(pg.estacion_id)) throw new HttpError(403, 'Fuera de tu estación');
     if (pg.conciliado) throw new HttpError(400, 'El pago ya fue conciliado con el Excel y no puede anularse');
-    if (pg.usuario_id !== user.id && user.rol !== 'admin') throw new HttpError(403, 'Solo el administrador o quien lo capturó puede anularlo');
+    if (pg.usuario_id !== user.id && user.rol !== 'admin' && !can(user, 'anular_pago')) throw new HttpError(403, 'Solo el administrador o quien lo capturó puede anularlo');
     await q.run('UPDATE pagos SET anulado=1 WHERE id=?', pg.id);
     await L.bitacora(user, 'PAGO_ANULADO', `#${pg.id} ${pg.no_factura} $${pg.monto}`, ip(req));
     return send(res, 200, { ok: true });
@@ -797,13 +800,14 @@ async function api(req, res, url) {
     return send(res, 201, { ok: true, id: 1000000000 + Number(r.lastInsertRowid), saldo_anterior: redondea(antes), saldo_nuevo: saldo, advertencia: saldo < 0 ? 'El consumo supera el saldo disponible; el saldo del cliente quedó negativo.' : null });
   }
   if (m === 'DELETE' && (mt = p.match(/^\/api\/debito\/movimientos\/(\d+)$/))) {
-    exigir(user, 'debito');
+    if (!can(user, 'debito') && !can(user, 'anular_prepago')) throw new HttpError(403, 'No tienes permiso para esta acción');
     const id = Number(mt[1]) - 1000000000;
     const mv = id > 0 ? await q.get('SELECT * FROM debito_app WHERE id=? AND anulado=0 AND conciliado=0', id) : null;
     if (!mv) throw new HttpError(404, 'Solo pueden anularse movimientos capturados en la aplicación y vigentes');
+    if (!can(user, 'debito') && mv.tipo !== 'RECARGA') throw new HttpError(403, 'Supervisor solo puede anular recargas de prepago');
     const idsMv = estacionesAsignadas(user);
     if (idsMv.length && !idsMv.includes(mv.estacion_id)) throw new HttpError(403, 'Fuera de tu estación');
-    if (mv.usuario_id !== user.id && user.rol !== 'admin') throw new HttpError(403, 'Solo el administrador o quien lo capturó puede anularlo');
+    if (mv.usuario_id !== user.id && user.rol !== 'admin' && !can(user, 'anular_prepago')) throw new HttpError(403, 'Solo el administrador o quien lo capturó puede anularlo');
     await q.run('UPDATE debito_app SET anulado=1 WHERE id=?', id);
     await L.bitacora(user, 'DEBITO_ANULADO', `#${id} ${mv.tipo} $${mv.importe || mv.abono} ${mv.k_cliente}`, ip(req));
     return send(res, 200, { ok: true });
@@ -949,12 +953,15 @@ async function api(req, res, url) {
     const estaciones = await parseEstaciones(b);
     const est = estaciones[0] || null;
     const temporal = L.passwordTemporal();
-    const r = await q.run('INSERT INTO usuarios(usuario,nombre,email,rol,estacion_id,must_change,pass_hash) VALUES (?,?,?,?,?,1,?)',
-      usuario, txt(b.nombre, 100), txt(b.email, 120) || null, b.rol, est, L.hashPassword(temporal));
-    if (estaciones.length) {
-      const inserts = estaciones.map((id) => `(${Number(r.lastInsertRowid)}, ${id})`).join(',');
-      await q.run(`INSERT INTO usuario_estaciones(usuario_id, estacion_id) VALUES ${inserts}`);
-    }
+    let r;
+    await tx(async () => {
+      r = await q.run('INSERT INTO usuarios(usuario,nombre,email,rol,estacion_id,must_change,pass_hash) VALUES (?,?,?,?,?,1,?)',
+        usuario, txt(b.nombre, 100), txt(b.email, 120) || null, b.rol, est, L.hashPassword(temporal));
+      if (estaciones.length) {
+        const inserts = estaciones.map((stationId) => `(${Number(r.lastInsertRowid)}, ${stationId})`).join(',');
+        await q.run(`INSERT INTO usuario_estaciones(usuario_id, estacion_id) VALUES ${inserts}`);
+      }
+    });
     await L.bitacora(user, 'USUARIO_ALTA', `${usuario} (${b.rol}) estaciones=${estaciones.join(',') || 'todas'}`, ip(req));
     return send(res, 201, { ok: true, id: Number(r.lastInsertRowid), password_temporal: temporal });
   }
@@ -971,10 +978,12 @@ async function api(req, res, url) {
     if (id === user.id && !activo) throw new HttpError(400, 'No puedes desactivar tu propio usuario');
     const estaciones = b.estaciones === undefined ? estacionesAsignadas(u) : await parseEstaciones(b);
     const est = estaciones[0] || null;
-    await q.run('UPDATE usuarios SET nombre=?, email=?, rol=?, estacion_id=?, activo=? WHERE id=?',
-      txt(b.nombre, 100) || u.nombre, b.email === undefined ? u.email : (txt(b.email, 120) || null), rol, est, activo, id);
-    await q.run('DELETE FROM usuario_estaciones WHERE usuario_id=?', id);
-    if (estaciones.length) await q.run('INSERT INTO usuario_estaciones(usuario_id, estacion_id) VALUES ' + estaciones.map((est) => `(${id}, ${est})`).join(',') );
+    await tx(async () => {
+      await q.run('UPDATE usuarios SET nombre=?, email=?, rol=?, estacion_id=?, activo=? WHERE id=?',
+        txt(b.nombre, 100) || u.nombre, b.email === undefined ? u.email : (txt(b.email, 120) || null), rol, est, activo, id);
+      await q.run('DELETE FROM usuario_estaciones WHERE usuario_id=?', id);
+      if (estaciones.length) await q.run('INSERT INTO usuario_estaciones(usuario_id, estacion_id) VALUES ' + estaciones.map((stationId) => `(${id}, ${stationId})`).join(',') );
+    });
     if (!activo) await q.run('DELETE FROM sesiones WHERE usuario_id=?', id);
     await L.bitacora(user, 'USUARIO_EDITA', `${u.usuario}: rol=${rol} activo=${activo} estaciones=${estaciones.join(',') || 'todas'}`, ip(req));
     return send(res, 200, { ok: true });
