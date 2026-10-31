@@ -65,11 +65,33 @@ const tx = async (fn) => {
 const ready = (async () => {
   const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
   await client.executeMultiple(schema.replace(/^\s*PRAGMA foreign_keys\s*=\s*OFF;\s*$/im, ''));
+  await client.execute('PRAGMA foreign_keys = ON');
   for (const [table, column, definition] of MIGRATIONS) {
     const columns = await q.all(`PRAGMA table_info(${table})`);
     if (!columns.some((entry) => entry.name === column)) {
       await q.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     }
+  }
+  const referenciasEstaciones = await q.all('PRAGMA foreign_key_list(usuario_estaciones)');
+  if (!referenciasEstaciones.some((referencia) => referencia.table === 'usuarios' && referencia.from === 'usuario_id') ||
+      !referenciasEstaciones.some((referencia) => referencia.table === 'dim_estacion' && referencia.from === 'estacion_id')) {
+    const invalidas = await q.get(`SELECT COUNT(*) AS cantidad FROM usuario_estaciones ue
+      LEFT JOIN usuarios u ON u.id=ue.usuario_id
+      LEFT JOIN dim_estacion e ON e.id=ue.estacion_id
+      WHERE u.id IS NULL OR e.id IS NULL`);
+    if (Number(invalidas.cantidad) > 0) throw new Error('No se puede migrar usuario_estaciones: existen asignaciones huérfanas.');
+    await tx(async () => {
+      await q.run(`CREATE TABLE usuario_estaciones_migracion (
+        usuario_id INTEGER NOT NULL,
+        estacion_id INTEGER NOT NULL,
+        PRIMARY KEY (usuario_id, estacion_id),
+        FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE,
+        FOREIGN KEY (estacion_id) REFERENCES dim_estacion(id) ON DELETE CASCADE
+      )`);
+      await q.run('INSERT INTO usuario_estaciones_migracion(usuario_id, estacion_id) SELECT usuario_id, estacion_id FROM usuario_estaciones');
+      await q.run('DROP TABLE usuario_estaciones');
+      await q.run('ALTER TABLE usuario_estaciones_migracion RENAME TO usuario_estaciones');
+    });
   }
   await q.run("UPDATE metodos_pago SET requiere_banco=1 WHERE nombre='Tarjeta'");
 })();

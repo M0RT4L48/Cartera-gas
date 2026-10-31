@@ -161,6 +161,17 @@ svg text{font:11px "Segoe UI",system-ui,sans-serif;fill:var(--mut)}
 .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
 .inline-form{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;background:var(--bg);border:1px solid var(--line);border-radius:var(--r);padding:18px;margin-bottom:18px}
 .inline-form label{display:grid;gap:4px;font-size:11px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+.asignacion-estaciones{width:260px;display:grid;gap:8px}
+.estaciones-dropdown{position:relative;font-size:12px}
+.estaciones-dropdown summary{cursor:pointer;list-style:none;padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--text);font-weight:600;text-transform:none;letter-spacing:normal}
+.estaciones-dropdown summary::-webkit-details-marker{display:none}
+.estaciones-dropdown summary:after{content:"▾";float:right;color:var(--mut)}
+.estaciones-dropdown[open] summary:after{content:"▴"}
+.estaciones-menu{position:absolute;top:calc(100% + 4px);left:0;z-index:30;width:max(100%,260px);max-height:260px;overflow:auto;padding:8px;background:var(--card);border:1px solid var(--line);border-radius:7px;box-shadow:0 10px 24px rgba(31,41,55,.16)}
+.estaciones-acciones{display:flex;gap:6px;padding-bottom:7px;margin-bottom:5px;border-bottom:1px solid var(--line)}
+.estacion-opcion{display:flex!important;grid-template-columns:auto 1fr;align-items:center;gap:8px!important;padding:5px 3px;color:var(--text)!important;font-size:12px!important;font-weight:500!important;text-transform:none!important;letter-spacing:normal!important;cursor:pointer}
+.estacion-opcion input{margin:0}
+.estaciones-dropdown[aria-disabled="true"] summary{opacity:.6}
 .toast{position:fixed;bottom:22px;right:22px;background:var(--ok);color:#fff;padding:12px 20px;border-radius:8px;z-index:80;box-shadow:0 8px 24px rgba(31,41,55,.2);max-width:90vw}
 .toast.bad{background:var(--bad)} .toast.warn{background:var(--warn)}
 .drop{background:var(--bg);border:2px dashed var(--line);border-radius:8px;padding:36px;margin:20px 0;text-align:center}

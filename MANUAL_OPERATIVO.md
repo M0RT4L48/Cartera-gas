@@ -51,7 +51,7 @@ El sistema implementa control de acceso basado en roles (RBAC) con alcance por e
 | **Supervisor** | Limitado a una o varias estaciones asignadas | Puede anular prepagos, modificar importes de despachos pendientes y anular pagos; no puede registrar pagos o movimientos ni administrar usuarios. |
 | **Consulta** | Global o por estación | Solo lectura: Visualización de indicadores, reportes, fichas y exportación de tablas a formato CSV. |
 
-Al crear o editar usuarios, marca **Todas las estaciones** para acceso global o desmárcala y selecciona una o varias estaciones. Debe seleccionarse al menos una estación en el modo específico. Las estaciones se guardan en la relación `usuario_estaciones`.
+Al crear o editar usuarios, marca **Acceso a todas las estaciones** para incluir las estaciones futuras, o desmárcala para seleccionar estaciones específicas desde el desplegable dinámico. Usa **Seleccionar todas** para elegir rápidamente todas las estaciones actuales. Debe seleccionarse al menos una estación en el modo específico. Las asignaciones se guardan en `usuario_estaciones`, con referencias a usuarios y estaciones.
 
 ---
 

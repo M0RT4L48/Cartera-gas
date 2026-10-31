@@ -364,8 +364,12 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal((await call('l', 'PUT', '/api/bancos/1', { nombre: 'Banco No Autorizado' })).status, 403);
   });
   await t('supervisor: permisos específicos y asignación múltiple de estaciones', async () => {
+    const relaciones = await L.q.all('PRAGMA foreign_key_list(usuario_estaciones)');
+    assert.ok(relaciones.some((relacion) => relacion.table === 'usuarios' && relacion.from === 'usuario_id'));
+    assert.ok(relaciones.some((relacion) => relacion.table === 'dim_estacion' && relacion.from === 'estacion_id'));
     const estaciones = (await call('a', 'GET', '/api/catalogos')).data.estaciones.map((station) => station.id);
     assert.ok(estaciones.length >= 2, 'Se requieren dos estaciones para probar la asignación múltiple');
+    await assert.rejects(L.q.run('INSERT INTO usuario_estaciones(usuario_id, estacion_id) VALUES (?, ?)', 2147483647, estaciones[0]));
     const asignadas = estaciones.slice(0, 2);
     const supervisorAlta = await call('a', 'POST', '/api/usuarios', {
       usuario: 'supervisor1', nombre: 'Supervisor Uno', rol: 'supervisor',
@@ -382,6 +386,10 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal((await call('a', 'POST', '/api/usuarios', {
       usuario: 'supervisorvacio', nombre: 'Supervisor Inválido', rol: 'supervisor',
       todas_estaciones: false, estaciones: [],
+    })).status, 400);
+    assert.equal((await call('a', 'POST', '/api/usuarios', {
+      usuario: 'supervisorinvalido', nombre: 'Supervisor Inválido', rol: 'supervisor',
+      todas_estaciones: false, estaciones: [asignadas[0], -1],
     })).status, 400);
     const all = await call('a', 'POST', '/api/usuarios', {
       usuario: 'supervisorall', nombre: 'Supervisor Todas', rol: 'supervisor', todas_estaciones: true, estaciones: [],

@@ -4,6 +4,52 @@
   const { html, money, int, fdate, corto, badge, S, api, gp, can, toast, modal, closeModal, setView, loading, errorView,
     pager, bindFilters, opt, qs, $, hoyLocal, clientePicker } = CG;
 
+  const selectorEstacionesHtml = (seleccionadas = []) => {
+    const ids = seleccionadas.map(Number);
+    return html`<details class="estaciones-dropdown">
+      <summary><span data-estaciones-resumen>Selecciona estaciones</span></summary>
+      <div class="estaciones-menu">
+        <div class="estaciones-acciones">
+          <button type="button" class="btn small" data-estaciones-accion="todas">Seleccionar todas</button>
+          <button type="button" class="btn small" data-estaciones-accion="ninguna">Limpiar</button>
+        </div>
+        ${S.cat.estaciones.length ? S.cat.estaciones.map((estacion) => html`<label class="estacion-opcion">
+          <input type="checkbox" name="estacion_seleccionada" value="${estacion.id}" data-estacion-opcion ${ids.includes(Number(estacion.id)) ? 'checked' : ''}>
+          <span>${CG.esc(corto(estacion.nombre))}</span>
+        </label>`) : html`<p class="mut">No hay estaciones disponibles.</p>`}
+      </div>
+    </details>`;
+  };
+  const conectarSelectorEstaciones = (form) => {
+    const todas = form.querySelector('[name="todas_estaciones"]');
+    const dropdown = form.querySelector('.estaciones-dropdown');
+    const resumen = form.querySelector('[data-estaciones-resumen]');
+    const opciones = [...form.querySelectorAll('[data-estacion-opcion]')];
+    const actualizar = () => {
+      opciones.forEach((opcion) => { opcion.disabled = todas.checked; });
+      form.querySelectorAll('[data-estaciones-accion]').forEach((boton) => { boton.disabled = todas.checked; });
+      const seleccionadas = opciones.filter((opcion) => opcion.checked).length;
+      resumen.textContent = todas.checked ? 'Todas las estaciones' :
+        `${seleccionadas} estación${seleccionadas === 1 ? '' : 'es'} seleccionada${seleccionadas === 1 ? '' : 's'}`;
+      dropdown.setAttribute('aria-disabled', String(todas.checked));
+    };
+    todas.addEventListener('change', () => {
+      if (todas.checked) opciones.forEach((opcion) => { opcion.checked = false; });
+      actualizar();
+    });
+    opciones.forEach((opcion) => opcion.addEventListener('change', () => {
+      if (opcion.checked) todas.checked = false;
+      actualizar();
+    }));
+    form.querySelectorAll('[data-estaciones-accion]').forEach((boton) => boton.addEventListener('click', () => {
+      todas.checked = false;
+      opciones.forEach((opcion) => { opcion.checked = boton.dataset.estacionesAccion === 'todas'; });
+      actualizar();
+    }));
+    actualizar();
+    return () => opciones.filter((opcion) => opcion.checked).map((opcion) => Number(opcion.value));
+  };
+
   // =============== CONTROL DE DÉBITO ===============
   CG.routes.debito = async () => {
     loading();
@@ -679,8 +725,8 @@
         <label style="width:150px">Usuario (acceso) *<input name="usuario" required pattern="[a-z0-9._-]{3,40}" placeholder="ej. jperez" title="3-40 caracteres: minúsculas, números, . _ -"></label>
         <label style="flex:1;min-width:200px">Correo electrónico<input name="email" type="email" maxlength="120"></label>
         <label style="width:200px">Rol *<select name="rol">${Object.entries(roles).map(([k, v]) => opt(k, v.etiqueta, 'gestor'))}</select></label>
-        <div style="width:260px"><label class="inline-check"><input type="checkbox" name="todas_estaciones" value="1" checked> Todas las estaciones</label>
-          <label>Estaciones asignadas<select name="estaciones" multiple size="${Math.min(6, S.cat.estaciones.length || 1)}" disabled>${S.cat.estaciones.map((e) => html`<option value="${e.id}">${CG.esc(corto(e.nombre))}</option>`)}</select></label></div>
+        <div class="asignacion-estaciones"><label class="inline-check"><input type="checkbox" name="todas_estaciones" value="1" checked> Acceso a todas las estaciones</label>
+          <label>Estaciones asignadas${selectorEstacionesHtml()}</label></div>
         <button class="btn accent" type="submit">+ Agregar usuario</button><div class="err" id="uErr" style="flex-basis:100%"></div></form>
       <div class="tablewrap"><table><thead><tr><th>Nombre</th><th>Usuario</th><th>Correo</th><th>Rol</th><th>Estaciones asignadas</th><th>Último acceso</th><th>Estado</th><th></th></tr></thead><tbody>
       ${r.rows.map((u) => html`<tr><td><b>${u.nombre}</b></td><td>${u.usuario}</td><td>${u.email}</td><td><span class="badge ${u.rol === 'admin' ? 'b-pink' : ['gestor', 'supervisor'].includes(u.rol) ? 'b-info' : 'b-mut'}">${roles[u.rol] ? roles[u.rol].etiqueta : u.rol}</span></td><td>${u.estaciones && u.estaciones.length ? u.estaciones.map((e) => corto(e.nombre)).join(', ') : 'Todas'}</td>
@@ -694,10 +740,9 @@
         <div class="card"><h3>Bitácora de actividad</h3><p class="mut">Registro de accesos, pagos, movimientos de débito, cambios de crédito, altas y cargas de datos.</p><a class="btn dark" href="#/bitacora">Ver bitácora</a></div></div>`);
     const formU = $('#formU');
     const todasEstacionesU = formU.querySelector('[name="todas_estaciones"]');
-    const selectEstacionesU = formU.querySelector('[name="estaciones"]');
-    todasEstacionesU.addEventListener('change', () => { selectEstacionesU.disabled = todasEstacionesU.checked; });
+    const estacionesSeleccionadasU = conectarSelectorEstaciones(formU);
     formU.onsubmit = async (e) => {
-      e.preventDefault(); const b = Object.fromEntries(new FormData(e.target)); const estaciones = [...selectEstacionesU.selectedOptions].map((o) => Number(o.value)).filter((n) => Number.isInteger(n) && n > 0);
+      e.preventDefault(); const b = Object.fromEntries(new FormData(e.target)); const estaciones = estacionesSeleccionadasU();
       if (!todasEstacionesU.checked && !estaciones.length) { $('#uErr').textContent = 'Selecciona al menos una estación o marca “Todas las estaciones”.'; return; }
       b.todas_estaciones = todasEstacionesU.checked; b.estaciones = estaciones; $('#uErr').textContent = '';
       try { const x = await api('/api/usuarios', { method: 'POST', body: b }); mostrarPassword('Usuario creado', b.usuario, x.password_temporal); CG.route(true); }
@@ -716,17 +761,16 @@
       <label>Nombre completo<input name="nombre" value="${u.nombre}" required></label>
       <label>Correo<input name="email" type="email" value="${u.email || ''}"></label>
       <label>Rol<select name="rol">${Object.entries(S.cat.roles).map(([k, v]) => opt(k, v.etiqueta, u.rol))}</select></label>
-      <label class="inline-check"><input type="checkbox" name="todas_estaciones" value="1" ${todas ? 'checked' : ''}> Todas las estaciones</label>
-      <label>Estaciones asignadas<select name="estaciones" multiple size="${Math.min(6, S.cat.estaciones.length || 1)}" ${todas ? 'disabled' : ''}>${S.cat.estaciones.map((e) => opt(e.id, corto(e.nombre), prev.includes(e.id) ? e.id : ''))}</select></label>
+      <label class="inline-check"><input type="checkbox" name="todas_estaciones" value="1" ${todas ? 'checked' : ''}> Acceso a todas las estaciones</label>
+      <label>Estaciones asignadas${selectorEstacionesHtml(prev)}</label>
       <label>Estado<select name="activo">${opt('1', 'Activo', u.activo)}${opt('0', 'Inactivo', u.activo)}</select></label>
       <div class="full err" id="ueErr"></div>
       <div class="full actions"><button type="button" class="btn" data-act="cerrar">Cancelar</button><button class="btn accent">Guardar</button></div></form>`);
     const formUE = $('#formUE');
     const todasEstacionesUE = formUE.querySelector('[name="todas_estaciones"]');
-    const selectEstacionesUE = formUE.querySelector('[name="estaciones"]');
-    todasEstacionesUE.addEventListener('change', () => { selectEstacionesUE.disabled = todasEstacionesUE.checked; });
+    const estacionesSeleccionadasUE = conectarSelectorEstaciones(formUE);
     formUE.onsubmit = async (e) => {
-      e.preventDefault(); const b = Object.fromEntries(new FormData(e.target)); const estaciones = [...selectEstacionesUE.selectedOptions].map((o) => Number(o.value)).filter((n) => Number.isInteger(n) && n > 0);
+      e.preventDefault(); const b = Object.fromEntries(new FormData(e.target)); const estaciones = estacionesSeleccionadasUE();
       if (!todasEstacionesUE.checked && !estaciones.length) { $('#ueErr').textContent = 'Selecciona al menos una estación o marca “Todas las estaciones”.'; return; }
       b.todas_estaciones = todasEstacionesUE.checked; b.estaciones = estaciones; b.activo = b.activo === '1';
       try { await api('/api/usuarios/' + u.id, { method: 'PUT', body: b }); toast('Usuario actualizado'); closeModal(); CG.route(true); }

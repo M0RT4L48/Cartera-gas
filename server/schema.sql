@@ -103,7 +103,9 @@ CREATE TABLE IF NOT EXISTS usuarios (
 CREATE TABLE IF NOT EXISTS usuario_estaciones (
   usuario_id  INTEGER NOT NULL,
   estacion_id INTEGER NOT NULL,
-  PRIMARY KEY (usuario_id, estacion_id)
+  PRIMARY KEY (usuario_id, estacion_id),
+  FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE,
+  FOREIGN KEY (estacion_id) REFERENCES dim_estacion(id) ON DELETE CASCADE
   -- Si no hay filas ni estacion_id heredado, el usuario tiene acceso a todas las estaciones.
 );
 CREATE TABLE IF NOT EXISTS sesiones (

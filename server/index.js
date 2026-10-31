@@ -23,7 +23,8 @@ async function parseEstaciones(body) {
   const raw = Array.isArray(body.estaciones) ? body.estaciones : [];
   if (tieneTodas && raw.length === 0) throw new HttpError(400, 'Selecciona al menos una estación o marca “Todas las estaciones”');
   const arr = raw.length ? raw : (body.estacion_id == null ? [] : [body.estacion_id]);
-  const ids = [...new Set(arr.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0))];
+  const ids = [...new Set(arr.map(Number))];
+  if (ids.some((id) => !Number.isInteger(id) || id <= 0)) throw new HttpError(400, 'La lista contiene una estación inválida');
   for (const id of ids) {
     if (!await q.get('SELECT 1 FROM dim_estacion WHERE id=?', id)) throw new HttpError(400, 'Estación inválida');
   }
