@@ -20,7 +20,9 @@ function estacionesAsignadas(user) {
 async function parseEstaciones(body) {
   const tieneTodas = Object.prototype.hasOwnProperty.call(body, 'todas_estaciones');
   if (tieneTodas && (body.todas_estaciones === true || body.todas_estaciones === 1 || body.todas_estaciones === 'true' || body.todas_estaciones === '1')) return [];
-  const raw = Array.isArray(body.estaciones) ? body.estaciones : [];
+  const raw = Array.isArray(body.estaciones)
+    ? body.estaciones
+    : body.estaciones == null || body.estaciones === '' ? [] : [body.estaciones];
   if (tieneTodas && raw.length === 0) throw new HttpError(400, 'Selecciona al menos una estación o marca “Todas las estaciones”');
   const arr = raw.length ? raw : (body.estacion_id == null ? [] : [body.estacion_id]);
   const ids = [...new Set(arr.map(Number))];

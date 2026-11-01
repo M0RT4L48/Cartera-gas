@@ -380,6 +380,13 @@ server.listen(0, '127.0.0.1', async () => {
     assert.deepEqual(relacionesAlta.map((relacion) => relacion.estacion_id), [...asignadas].sort((a, b) => a - b));
     const supervisor = (await call('a', 'GET', '/api/usuarios')).data.rows.find((row) => row.usuario === 'supervisor1');
     assert.deepEqual(supervisor.estaciones.map((station) => station.id), asignadas);
+    const supervisorEscalar = await call('a', 'POST', '/api/usuarios', {
+      usuario: 'supervisorescalar', nombre: 'Supervisor Escalar', rol: 'supervisor',
+      todas_estaciones: false, estaciones: String(asignadas[0]),
+    });
+    assert.equal(supervisorEscalar.status, 201, JSON.stringify(supervisorEscalar.data));
+    const relacionEscalar = await L.q.all('SELECT estacion_id FROM usuario_estaciones WHERE usuario_id=?', supervisorEscalar.data.id);
+    assert.deepEqual(relacionEscalar.map((relacion) => relacion.estacion_id), [asignadas[0]]);
     assert.equal((await call('a', 'PUT', '/api/usuarios/' + supervisor.id, {
       rol: 'supervisor', activo: true, todas_estaciones: false, estaciones: [asignadas[1], asignadas[0]],
     })).status, 200);
