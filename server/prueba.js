@@ -431,6 +431,18 @@ server.listen(0, '127.0.0.1', async () => {
       cliente: `Cliente Supervisor Segunda ${process.pid}`, estacion_id: asignadas[1], limite: 0, dias: 0,
     });
     assert.equal(clienteSegundaEstacion.status, 201, JSON.stringify(clienteSegundaEstacion.data));
+    const clientesTodas = (await call('s', 'GET', '/api/clientes?estacion=todas&q=' + enc('Cliente Supervisor'))).data.rows;
+    assert.ok(clientesTodas.some((cliente) => cliente.k_cliente === k));
+    assert.ok(clientesTodas.some((cliente) => cliente.k_cliente === clienteSegundaEstacion.data.k_cliente));
+    const listaTodas = (await call('s', 'GET', '/api/clientes-lista?estacion=todas')).data.rows;
+    assert.ok(listaTodas.some((cliente) => cliente.k_cliente === k));
+    assert.ok(listaTodas.some((cliente) => cliente.k_cliente === clienteSegundaEstacion.data.k_cliente));
+    const dashboardTodas = (await call('s', 'GET', '/api/dashboard?estacion=todas')).data;
+    assert.deepEqual(dashboardTodas.por_estacion.map((station) => station.id).sort((a, b) => a - b), [...asignadas].sort((a, b) => a - b));
+    for (const endpoint of ['/api/alertas', '/api/facturas?size=10', '/api/por-facturar', '/api/debito',
+      '/api/debito/movimientos', '/api/pagos', '/api/gestiones']) {
+      assert.equal((await call('s', 'GET', endpoint + (endpoint.includes('?') ? '&' : '?') + 'estacion=todas')).status, 200, endpoint);
+    }
     assert.equal((await call('s', 'GET', '/api/cliente?k=' + enc(clienteSegundaEstacion.data.k_cliente))).status, 200);
     const pendiente = await call('a', 'POST', '/api/por-facturar', {
       k_cliente: k, importe: 80, fecha_despacho: '2026-10-25', despacho: `DESP-SUP-${process.pid}`,
@@ -471,6 +483,8 @@ server.listen(0, '127.0.0.1', async () => {
       const otro = (await call('a', 'POST', '/api/clientes', {
         cliente: `Cliente Supervisor Fuera ${process.pid}`, estacion_id: estacionesNoAsignadas[0], limite: 0, dias: 0,
       }));
+      const noAsignadaEnVista = (await call('s', 'GET', '/api/clientes?estacion=todas&q=' + enc('Cliente Supervisor Fuera'))).data.rows;
+      assert.equal(noAsignadaEnVista.length, 0);
       const fuera = await call('a', 'POST', '/api/por-facturar', {
         k_cliente: otro.data.k_cliente, importe: 15, fecha_despacho: '2026-10-25', despacho: `DESP-FUERA-${process.pid}`,
       });

@@ -90,8 +90,10 @@
     S.cat = await api('/api/catalogos'); S.snap = S.cat.fecha_corte; S.clientes = null;
     const ids = Array.isArray(S.user.estaciones) && S.user.estaciones.length ? S.user.estaciones : null;
     const opts = ids ? S.cat.estaciones.filter((e) => ids.includes(e.id)) : S.cat.estaciones;
-    $('#gEst').innerHTML = (ids ? '' : '<option value="">Todas las estaciones</option>') + opts.map((e) => `<option value="${e.id}">${CG.esc(e.nombre)}</option>`).join('');
-    if (ids && !ids.includes(Number(S.est))) S.est = String(ids[0]);
+    const todasAsignadas = ids && ids.length > 1;
+    $('#gEst').innerHTML = (todasAsignadas ? '<option value="todas">Todas mis estaciones</option>' : ids ? '' : '<option value="">Todas las estaciones</option>') +
+      opts.map((e) => `<option value="${e.id}">${CG.esc(e.nombre)}</option>`).join('');
+    if (ids && S.est !== 'todas' && !ids.includes(Number(S.est))) S.est = todasAsignadas ? 'todas' : String(ids[0]);
     $('#gEst').value = S.est;
   };
   CG.clientesLista = (conFacturas) => {
@@ -116,8 +118,11 @@
     dashboardRequest = null;
     S.dash = null; S.dashP = null; S.clientes = null;
     const ids = Array.isArray(S.user.estaciones) && S.user.estaciones.length ? S.user.estaciones : null;
-    const defaultEst = ids ? String(ids[0]) : (store.get('est', ''));
-    S.est = ids ? (ids.includes(Number(store.get('est', defaultEst))) ? String(store.get('est', defaultEst)) : String(ids[0])) : store.get('est', '');
+    const defaultEst = ids ? (ids.length > 1 ? 'todas' : String(ids[0])) : '';
+    const storedEst = store.get('est', defaultEst);
+    S.est = ids
+      ? ids.length > 1 ? 'todas' : ids.includes(Number(storedEst)) ? String(storedEst) : defaultEst
+      : storedEst === 'todas' ? '' : storedEst;
     await CG.loadCatalogos();
     S.corte = store.get('corte', S.snap);
     $('#gEst').value = S.est; $('#gEst').disabled = !!(ids && ids.length === 1);

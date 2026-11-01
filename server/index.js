@@ -75,13 +75,25 @@ const requiereBanco = (v) => v === true || v === 1 || v === '1' || v === 'on';
 
 function alcance(user, query) {
   const ids = estacionesAsignadas(user);
+  if (query.get('estacion') === 'todas') return { est: null, estaciones: ids.length ? ids : null };
   if (ids.length) {
     const e = Number(query.get('estacion'));
-    if (Number.isInteger(e) && e > 0 && ids.includes(e)) return e;
-    return ids[0];
+    if (Number.isInteger(e) && e > 0 && ids.includes(e)) return { est: e, estaciones: null };
+    return { est: ids[0], estaciones: null };
   }
   const e = Number(query.get('estacion'));
-  return Number.isInteger(e) && e > 0 ? e : null;
+  return { est: Number.isInteger(e) && e > 0 ? e : null, estaciones: null };
+}
+function filtrarEstaciones(scope, columna, wh, pr) {
+  if (Array.isArray(scope.estaciones)) {
+    if (scope.estaciones.length) {
+      wh.push(`${columna} IN (${scope.estaciones.map(() => '?').join(',')})`);
+      pr.push(...scope.estaciones);
+    } else wh.push('1=0');
+  } else if (scope.est) {
+    wh.push(`${columna}=?`);
+    pr.push(scope.est);
+  }
 }
 async function verificaCliente(user, k) {
   const c = await q.get('SELECT k_cliente, estacion_id FROM dim_cliente WHERE k_cliente=?', k);
@@ -90,7 +102,13 @@ async function verificaCliente(user, k) {
   if (ids.length && !ids.includes(c.estacion_id)) throw new HttpError(403, 'Cliente fuera de tu estación');
   return c;
 }
-const params = async (query, user) => { const p = Object.fromEntries(query.entries()); p.corte = await Q.corteValido(p.corte); p.est = alcance(user, query); return p; };
+const params = async (query, user) => {
+  const p = Object.fromEntries(query.entries()), scope = alcance(user, query);
+  p.corte = await Q.corteValido(p.corte);
+  p.est = scope.est;
+  p.estaciones = scope.estaciones;
+  return p;
+};
 
 // ---------- login con bloqueo ----------
 const MAX_INTENTOS = 5, BLOQUEO_MIN = 15;
@@ -324,7 +342,7 @@ async function api(req, res, url) {
     if (p === '/api/alertas') return send(res, 200, await Q.alertas(await params(query, user)));
     if (p === '/api/clientes-lista') {
       const pr = await params(query, user);
-      return send(res, 200, { rows: await Q.listaClientes({ est: pr.est, conFacturas: pr.con_facturas === '1', corte: pr.corte }) });
+      return send(res, 200, { rows: await Q.listaClientes({ est: pr.est, estaciones: pr.estaciones, conFacturas: pr.con_facturas === '1', corte: pr.corte }) });
     }
     if (p === '/api/facturas') {
       const pr = await params(query, user);
@@ -396,7 +414,7 @@ async function api(req, res, url) {
     if (p === '/api/debito/movimientos') { const pr = await params(query, user); if (pr.k) await verificaCliente(user, pr.k); return send(res, 200, await Q.debitoMovs(pr)); }
     if (p === '/api/pagos') {
       const wh = [], pr = [];
-      const e = alcance(user, query); if (e) { wh.push('p.estacion_id=?'); pr.push(e); }
+      filtrarEstaciones(alcance(user, query), 'p.estacion_id', wh, pr);
       if (query.get('q')) { wh.push('(c.cliente LIKE ? OR p.no_factura LIKE ? OR p.referencia LIKE ?)'); const l = `%${query.get('q')}%`; pr.push(l, l, l); }
       return send(res, 200, { rows: await q.all(`SELECT p.id, p.k_cliente, c.cliente, e.nombre estacion, p.no_factura, p.sin_aplicar, p.fecha, p.monto, p.metodo, COALESCE(p.banco,b.nombre) banco, p.referencia, p.notas,
           p.conciliado, p.anulado, p.creado, u.nombre usuario FROM pagos p JOIN dim_cliente c ON c.k_cliente=p.k_cliente
@@ -405,7 +423,7 @@ async function api(req, res, url) {
     }
     if (p === '/api/gestiones') {
       const wh = [], pr = [];
-      const e = alcance(user, query); if (e) { wh.push('c.estacion_id=?'); pr.push(e); }
+      filtrarEstaciones(alcance(user, query), 'c.estacion_id', wh, pr);
       const estado = query.get('estado'); if (estado) { wh.push('g.estado=?'); pr.push(estado); }
       if (query.get('q')) { wh.push('c.cliente LIKE ?'); pr.push(`%${query.get('q')}%`); }
       return send(res, 200, { rows: await q.all(`SELECT g.*, c.cliente, e.nombre estacion, u.nombre usuario FROM gestiones g JOIN dim_cliente c ON c.k_cliente=g.k_cliente
