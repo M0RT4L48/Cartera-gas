@@ -146,9 +146,10 @@
         ${can('pagos') && f.saldo > 0.005 ? html`<div style="margin-bottom:12px"><button class="btn accent" data-act="pago" data-k="${f.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">Registrar pago</button>
           <a class="btn" href="#/pagos?k=${encodeURIComponent(f.k_cliente)}" data-act="cerrar">Aplicar un cargo a varias facturas (FIFO)</a></div>` : ''}
         <h3 style="font-size:14px;margin:6px 0">Pagos capturados en la aplicación</h3>
-        ${d.pagos.length ? html`<div class="tablewrap nomax"><table><thead><tr><th>Fecha</th><th>Método</th><th>Banco</th><th>Referencia</th><th class="n">Monto</th><th>Registró</th><th></th></tr></thead><tbody>
+        ${d.pagos.length ? html`<div class="tablewrap nomax"><table><thead><tr><th>Fecha</th><th>Método</th><th>Banco</th><th>Referencia</th><th class="n">Monto</th><th>Registró</th><th></th><th></th></tr></thead><tbody>
           ${d.pagos.map((p) => html`<tr><td>${fdate(p.fecha)}</td><td>${p.metodo}</td><td>${p.banco || ''}</td><td>${p.referencia}</td><td class="n">${money(p.monto, 2)}</td><td>${p.usuario}</td>
-            <td>${p.anulado ? badge('Cerrada') : p.conciliado ? html`<span class="badge b-mut">Conciliado</span>` : (can('pagos') || can('anular_pago')) ? html`<button class="btn small danger" data-act="anularPago" data-id="${p.id}">Anular</button>` : ''}</td></tr>`)}</tbody></table></div>` : html`<div class="mut">Sin pagos capturados.</div>`}
+            <td>${p.anulado ? badge('Cerrada') : p.conciliado ? html`<span class="badge b-mut">Conciliado</span>` : (can('pagos') || can('anular_pago')) ? html`<button class="btn small danger" data-act="anularPago" data-id="${p.id}">Anular</button>` : ''}</td>
+            <td>${p.anulado && p.desde_prepago && !p.prepago_devuelto && (can('pagos') || can('anular_pago')) ? html`<button class="btn small" data-act="anularPago" data-reparar="1" data-id="${p.id}">Reparar prepago</button>` : ''}</td></tr>`)}</tbody></table></div>` : html`<div class="mut">Sin pagos capturados.</div>`}
         <h3 style="font-size:14px;margin:14px 0 6px">Despachos incluidos (${d.despachos.length})</h3>
         <div class="tablewrap" style="max-height:300px"><table><thead><tr><th>Fecha</th><th>Despacho</th><th>Grupo</th><th>Estatus</th><th class="n">Importe</th><th class="n">Abono</th><th>Fecha pago</th></tr></thead><tbody>
           ${d.despachos.map((x) => html`<tr><td>${fdate(x.fecha_despacho)}</td><td>${x.despacho}</td><td>${x.grupo}</td><td>${x.estatus}</td><td class="n">${money(x.importe, 2)}</td><td class="n">${money(x.abono, 2)}</td><td>${fdate(x.fecha_pago)}</td></tr>`)}</tbody></table></div>
@@ -189,8 +190,19 @@
     } catch (error) { toast(error.message, 'bad'); }
   };
   CG.acts.anularPago = async (el) => {
-    if (!confirm('¿Anular este pago? El saldo de la factura se restablecerá.')) return;
-    try { await api('/api/pagos/' + el.dataset.id, { method: 'DELETE' }); toast('Pago anulado'); closeModal(); CG.route(true); } catch (e) { toast(e.message, 'bad'); }
+    const reparar = el.dataset.reparar === '1';
+    const mensaje = reparar
+      ? 'El pago ya aparece anulado, pero su devolución de prepago no está registrada. ¿Regularizar el saldo a favor?'
+      : '¿Anular este pago? El saldo de la factura se restablecerá y, si se aplicó desde prepago, también se devolverá ese importe al saldo a favor del cliente.';
+    if (!confirm(mensaje)) return;
+    try {
+      const r = await api('/api/pagos/' + el.dataset.id, { method: 'DELETE' });
+      toast(r.prepago_restaurado > 0
+        ? `${r.ya_anulado ? 'Prepago regularizado' : 'Pago anulado'}; ${money(r.prepago_restaurado, 2)} devueltos al saldo de prepago.`
+        : r.ya_anulado ? 'El pago ya estaba anulado; no se modificó el saldo.' : 'Pago anulado');
+      closeModal();
+      CG.route(true);
+    } catch (e) { toast(e.message, 'bad'); }
   };
 
   // ---- pago rapido a una factura ----
@@ -449,8 +461,9 @@
           <div class="full err" id="gErr"></div><div class="full actions"><button class="btn accent" type="submit">Guardar gestión</button></div></form>` : ''}
         ${d.gestiones.length ? html`<div class="tablewrap nomax"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Resultado</th><th>Promesa</th><th>Estado</th><th>Notas</th><th>Usuario</th></tr></thead><tbody>
         ${d.gestiones.map((g) => html`<tr><td>${fdate(g.fecha)}</td><td>${g.tipo}</td><td>${g.resultado}</td><td>${g.promesa_fecha ? html`${fdate(g.promesa_fecha)} ${g.promesa_monto ? money(g.promesa_monto) : ''}` : ''}</td><td>${badge(g.estado)}</td><td class="wrap">${g.notas}</td><td>${g.usuario}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">Aún no hay gestiones de cobranza.</div>`}`,
-      pagos: () => d.pagos.length ? html`<div class="tablewrap nomax"><table><thead><tr><th>Fecha</th><th>Factura</th><th>Método</th><th>Banco</th><th>Referencia</th><th class="n">Monto</th><th>Registró</th><th></th></tr></thead><tbody>
-        ${d.pagos.map((p) => html`<tr><td>${fdate(p.fecha)}</td><td>${p.sin_aplicar ? html`<span class="badge b-warn">Sin aplicar</span>` : p.no_factura}</td><td>${p.metodo}</td><td>${p.banco || ''}</td><td>${p.referencia}</td><td class="n">${money(p.monto, 2)}</td><td>${p.usuario}</td><td>${p.anulado ? badge('Cerrada') : p.conciliado ? html`<span class="badge b-mut">Conciliado</span>` : p.sin_aplicar ? html`<span class="badge b-warn">Pendiente de asignar</span>` : html`<span class="badge b-ok">Aplicado</span>`}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">Sin pagos capturados en la aplicación.</div>`,
+      pagos: () => d.pagos.length ? html`<div class="tablewrap nomax"><table><thead><tr><th>Fecha</th><th>Factura</th><th>Método</th><th>Banco</th><th>Referencia</th><th class="n">Monto</th><th>Registró</th><th>Estado</th><th></th></tr></thead><tbody>
+        ${d.pagos.map((p) => html`<tr><td>${fdate(p.fecha)}</td><td>${p.sin_aplicar ? html`<span class="badge b-warn">Sin aplicar</span>` : p.no_factura}</td><td>${p.metodo}</td><td>${p.banco || ''}</td><td>${p.referencia}</td><td class="n">${money(p.monto, 2)}</td><td>${p.usuario}</td><td>${p.anulado ? badge('Cerrada') : p.conciliado ? html`<span class="badge b-mut">Conciliado</span>` : p.sin_aplicar ? html`<span class="badge b-warn">Pendiente de asignar</span>` : html`<span class="badge b-ok">Aplicado</span>`}</td>
+        <td>${p.anulado && p.desde_prepago && !p.prepago_devuelto && (can('pagos') || can('anular_pago')) ? html`<button class="btn small" data-act="anularPago" data-reparar="1" data-id="${p.id}">Reparar prepago</button>` : ''}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">Sin pagos capturados en la aplicación.</div>`,
       historial: () => d.historial.length ? html`<div class="tablewrap nomax"><table><thead><tr><th>Mes de factura</th><th class="n">Facturado</th><th class="n">Abonado</th><th class="n">Diferencia</th></tr></thead><tbody>
         ${d.historial.map((h) => html`<tr><td>${fmes(h.mes)}</td><td class="n">${money(h.facturado)}</td><td class="n">${money(h.cobrado)}</td><td class="n ${h.facturado - h.cobrado > 0 ? 'neg' : ''}">${money(h.facturado - h.cobrado)}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">Sin historial.</div>`,
     }[cliTab]();

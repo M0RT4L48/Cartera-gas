@@ -116,13 +116,16 @@ server.listen(0, '127.0.0.1', async () => {
   let facs;
   await t('pago individual reduce saldo y KPI; anular lo restablece', async () => {
     facs = (await detalle()).abiertas; const f = facs[0];
+    const saldoFavorAntes = (await detalle()).cliente.saldo_favor;
     const r = await call('a', 'POST', '/api/pagos', { k_cliente: cliPagos.k_cliente, estacion_id: f.estacion_id, no_factura: f.no_factura, monto: 100, fecha: '2026-10-20', metodo: metodoPagoPrueba, banco_id: bancoId, corte: '2026-10-13' });
     assert.equal(r.status, 201, JSON.stringify(r.data));
     assert.ok((await call('a', 'GET', '/api/pagos')).data.rows.some((p) => p.metodo === metodoPagoPrueba && p.banco === 'BBVA'));
     assert.equal((await call('a', 'POST', '/api/pagos', { k_cliente: cliPagos.k_cliente, estacion_id: f.estacion_id, no_factura: f.no_factura, monto: 1, fecha: '2026-10-20', metodo: 'Método No Configurado', corte: '2026-10-13' })).status, 400);
     assert.equal(Math.round(dash.kpis.facturada - (await call('a', 'GET', '/api/dashboard?corte=2026-10-13')).data.kpis.facturada), 100);
+    assert.equal((await detalle()).cliente.saldo_favor, saldoFavorAntes);
     assert.equal((await call('a', 'DELETE', '/api/pagos/' + r.data.ids[0])).status, 200);
     assert.equal(Math.round((await call('a', 'GET', '/api/dashboard?corte=2026-10-13')).data.kpis.facturada), 10045656);
+    assert.equal((await detalle()).cliente.saldo_favor, saldoFavorAntes);
   });
   await t('eliminar método no borra el nombre histórico del pago', async () => {
     assert.equal((await call('a', 'DELETE', '/api/metodos-pago/' + metodoPagoId)).status, 200);
@@ -231,7 +234,10 @@ server.listen(0, '127.0.0.1', async () => {
     await L.q.run('DELETE FROM dim_cliente WHERE k_cliente=?', k);
   });
   await t('prepago CxC consume solo lo aplicado y conserva el remanente', async () => {
-    const factura = (await detalle()).abiertas[0];
+    const facturas = (await detalle()).abiertas.filter((factura) => factura.saldo >= 75).slice(0, 2);
+    assert.equal(facturas.length, 2, 'Se requieren dos facturas abiertas con saldo suficiente para probar la anulación parcial');
+    const [factura, facturaSegunda] = facturas;
+    const saldosIniciales = facturas.map((item) => item.saldo);
     const abono = await call('a', 'POST', '/api/debito/movimientos', {
       k_cliente: cliPagos.k_cliente, tipo: 'ABONO', monto: 500, fecha: '2026-10-20', folio: 'PREPAGO-CXC-TEST',
       banco_id: bancoId, metodo: 'Transferencia SPEI',
@@ -241,7 +247,10 @@ server.listen(0, '127.0.0.1', async () => {
     const incompleto = await call('a', 'POST', '/api/pagos/lote', { ...basePago, aplicaciones: [{ no_factura: factura.no_factura, estacion_id: factura.estacion_id, monto: 100 }] });
     assert.equal(incompleto.status, 400);
     assert.equal((await call('a', 'GET', '/api/prepago/saldo?k=' + enc(cliPagos.k_cliente))).data.saldo_prepago, 500);
-    const r = await call('a', 'POST', '/api/pagos/lote', { ...basePago, referencia: 'APLICA-PREPAGO', aplicaciones: [{ no_factura: factura.no_factura, estacion_id: factura.estacion_id, monto: 150 }] });
+    const r = await call('a', 'POST', '/api/pagos/lote', { ...basePago, referencia: 'APLICA-PREPAGO', aplicaciones: [
+      { no_factura: factura.no_factura, estacion_id: factura.estacion_id, monto: 75 },
+      { no_factura: facturaSegunda.no_factura, estacion_id: facturaSegunda.estacion_id, monto: 75 },
+    ] });
     assert.equal(r.status, 201, JSON.stringify(r.data));
     assert.equal(r.data.aplicado, 150);
     assert.equal(r.data.sin_aplicar, 0);
@@ -249,10 +258,78 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal(r.data.prepago_saldo_remanente, 350);
     assert.equal((await call('a', 'GET', '/api/prepago/saldo?k=' + enc(cliPagos.k_cliente))).data.saldo_prepago, 350);
     assert.ok(!(await call('a', 'GET', '/api/pagos?q=APLICA-PREPAGO')).data.rows.some((p) => p.sin_aplicar === 1));
+    assert.equal(r.data.ids.length, 2);
+    for (const id of r.data.ids) {
+      const prepagoRef = await L.q.get('SELECT prepago_ref_id FROM pagos WHERE id=?', id);
+      assert.equal(prepagoRef.prepago_ref_id, r.data.prepago_debito_id - 1000000000);
+    }
     const bitacora = (await call('a', 'GET', '/api/bitacora')).data.rows.find((row) => row.accion === 'PAGO' && row.detalle.includes('prepago_aplicado:$150.00'));
     assert.ok(bitacora && bitacora.usuario === 'admin' && bitacora.detalle.includes('fecha:2026-10-20') && bitacora.detalle.includes('prepago_remanente:$350.00'));
-    for (const id of r.data.ids) await call('a', 'DELETE', '/api/pagos/' + id);
-    assert.equal((await call('a', 'DELETE', '/api/debito/movimientos/' + r.data.prepago_debito_id)).status, 200);
+    assert.equal((await call('a', 'DELETE', '/api/debito/movimientos/' + r.data.prepago_debito_id)).status, 400);
+    const saldoFacturaAplicado = (await detalle()).abiertas.find((item) =>
+      item.no_factura === factura.no_factura && item.estacion_id === factura.estacion_id).saldo;
+    assert.equal(saldoFacturaAplicado, saldosIniciales[0] - 75);
+    const anulacion = await call('a', 'DELETE', '/api/pagos/' + r.data.ids[0]);
+    assert.equal(anulacion.status, 200, JSON.stringify(anulacion.data));
+    assert.equal(anulacion.data.prepago_restaurado, 75);
+    assert.equal((await call('a', 'GET', '/api/prepago/saldo?k=' + enc(cliPagos.k_cliente))).data.saldo_prepago, 425);
+    const clienteDespuesDeAnular = await detalle();
+    assert.equal(clienteDespuesDeAnular.cliente.saldo_favor, 425);
+    assert.equal(clienteDespuesDeAnular.abiertas.find((item) =>
+      item.no_factura === factura.no_factura && item.estacion_id === factura.estacion_id).saldo, saldosIniciales[0]);
+    assert.equal(clienteDespuesDeAnular.abiertas.find((item) =>
+      item.no_factura === facturaSegunda.no_factura && item.estacion_id === facturaSegunda.estacion_id).saldo, saldosIniciales[1] - 75);
+    assert.ok(clienteDespuesDeAnular.debito.some((movimiento) =>
+      movimiento.folio === `REVERSA-PAGO-${r.data.ids[0]}` && movimiento.tipo === 'RECARGA' && movimiento.abono === 75));
+    const reintentoAnulacion = await call('a', 'DELETE', '/api/pagos/' + r.data.ids[0]);
+    assert.equal(reintentoAnulacion.status, 200, JSON.stringify(reintentoAnulacion.data));
+    assert.equal(reintentoAnulacion.data.prepago_restaurado, 0);
+    assert.equal((await call('a', 'GET', '/api/prepago/saldo?k=' + enc(cliPagos.k_cliente))).data.saldo_prepago, 425);
+
+    const pagoDuplicado = await call('a', 'POST', '/api/pagos', {
+      k_cliente: cliPagos.k_cliente, estacion_id: facturaSegunda.estacion_id, no_factura: facturaSegunda.no_factura,
+      monto: 25, desde_prepago: 25, fecha: '2026-10-20', metodo: 'Prepago', corte: '2026-10-13',
+    });
+    assert.equal(pagoDuplicado.status, 201, JSON.stringify(pagoDuplicado.data));
+    const prepagoDuplicado = await L.q.get('SELECT prepago_ref_id FROM pagos WHERE id=?', pagoDuplicado.data.ids[0]);
+    assert.ok(prepagoDuplicado.prepago_ref_id);
+    await L.q.run('UPDATE pagos SET prepago_ref_id=NULL, anulado=1 WHERE id=?', r.data.ids[1]);
+    const pagoHuerfano = (await call('a', 'GET', '/api/pagos?q=APLICA-PREPAGO')).data.rows
+      .find((pago) => pago.id === r.data.ids[1]);
+    assert.equal(pagoHuerfano.desde_prepago, 1);
+    assert.equal(pagoHuerfano.prepago_devuelto, 0);
+    const anulacionLegacy = await call('a', 'DELETE', '/api/pagos/' + r.data.ids[1]);
+    assert.equal(anulacionLegacy.status, 200, JSON.stringify(anulacionLegacy.data));
+    assert.equal(anulacionLegacy.data.prepago_restaurado, 75);
+    assert.equal(anulacionLegacy.data.ya_anulado, true);
+    assert.equal((await call('a', 'GET', '/api/prepago/saldo?k=' + enc(cliPagos.k_cliente))).data.saldo_prepago, 475);
+    assert.equal((await detalle()).cliente.saldo_favor, 475);
+    const reintentoLegacy = await call('a', 'DELETE', '/api/pagos/' + r.data.ids[1]);
+    assert.equal(reintentoLegacy.status, 200, JSON.stringify(reintentoLegacy.data));
+    assert.equal(reintentoLegacy.data.prepago_restaurado, 0);
+    assert.equal((await call('a', 'GET', '/api/prepago/saldo?k=' + enc(cliPagos.k_cliente))).data.saldo_prepago, 475);
+    const pagoListadoReparado = (await call('a', 'GET', '/api/pagos?q=APLICA-PREPAGO')).data.rows
+      .find((pago) => pago.id === r.data.ids[1]);
+    assert.equal(pagoListadoReparado.desde_prepago, 1);
+    assert.equal(pagoListadoReparado.prepago_devuelto, 1);
+    assert.equal((await call('a', 'DELETE', '/api/pagos/' + pagoDuplicado.data.ids[0])).status, 200);
+    assert.equal((await call('a', 'GET', '/api/prepago/saldo?k=' + enc(cliPagos.k_cliente))).data.saldo_prepago, 500);
+    assert.equal((await detalle()).cliente.saldo_favor, 500);
+    const devolucion = (await call('a', 'GET', '/api/debito/movimientos?k=' + enc(cliPagos.k_cliente))).data.rows
+      .find((movimiento) => movimiento.folio === `REVERSA-PAGO-${r.data.ids[0]}`);
+    assert.ok(devolucion && devolucion.abono === 75);
+    assert.equal((await call('a', 'DELETE', '/api/debito/movimientos/' + devolucion.id)).status, 400);
+    const devolucionLegacy = (await call('a', 'GET', '/api/debito/movimientos?k=' + enc(cliPagos.k_cliente))).data.rows
+      .find((movimiento) => movimiento.folio === `REVERSA-PAGO-${r.data.ids[1]}`);
+    assert.ok(devolucionLegacy && devolucionLegacy.abono === 75);
+    const devolucionDuplicada = (await call('a', 'GET', '/api/debito/movimientos?k=' + enc(cliPagos.k_cliente))).data.rows
+      .find((movimiento) => movimiento.folio === `REVERSA-PAGO-${pagoDuplicado.data.ids[0]}`);
+    assert.ok(devolucionDuplicada && devolucionDuplicada.abono === 25);
+    await L.q.run('DELETE FROM pagos WHERE id IN (?,?,?)', ...r.data.ids, ...pagoDuplicado.data.ids);
+    await L.q.run('DELETE FROM debito_app WHERE id=?', r.data.prepago_debito_id - 1000000000);
+    await L.q.run('DELETE FROM debito_app WHERE id=?', devolucion.id - 1000000000);
+    await L.q.run('DELETE FROM debito_app WHERE id=?', devolucionLegacy.id - 1000000000);
+    await L.q.run('DELETE FROM debito_app WHERE id=?', devolucionDuplicada.id - 1000000000);
     assert.equal((await call('a', 'DELETE', '/api/debito/movimientos/' + abono.data.id)).status, 200);
   });
 

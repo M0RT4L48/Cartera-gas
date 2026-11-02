@@ -237,7 +237,9 @@ async function facturaDetalle({ corte, k, est, no }) {
     FROM v_cxc f LEFT JOIN credito cr ON cr.k_cliente=f.k_cliente
     WHERE f.k_cliente=? AND f.estacion_id=? AND f.no_factura=? ORDER BY f.fecha_despacho, f.id LIMIT 500`, k, est, no);
   const pagos = await q.all(`SELECT p.id, p.fecha, p.monto, p.metodo, COALESCE(p.banco,b.nombre) banco, p.referencia, p.notas,
-      p.conciliado, p.anulado, p.creado, u.nombre usuario
+      p.conciliado, p.anulado, p.desde_prepago,
+      CASE WHEN EXISTS (SELECT 1 FROM debito_app d WHERE d.k_cliente=p.k_cliente AND d.folio='REVERSA-PAGO-'||p.id) THEN 1 ELSE 0 END prepago_devuelto,
+      p.creado, u.nombre usuario
     FROM pagos p LEFT JOIN usuarios u ON u.id=p.usuario_id LEFT JOIN bancos b ON b.id=p.banco_id
     WHERE p.k_cliente=? AND p.estacion_id=? AND p.no_factura=? ORDER BY p.id DESC`, k, est, no);
   return { factura: f, despachos, pagos };
@@ -288,7 +290,9 @@ async function clienteDetalle({ corte, k }) {
   const gestiones = await q.all(`SELECT g.*, u.nombre usuario FROM gestiones g LEFT JOIN usuarios u ON u.id=g.usuario_id
     WHERE g.k_cliente=? ORDER BY g.id DESC LIMIT 100`, k);
   const pagos = await q.all(`SELECT p.id, p.no_factura, p.sin_aplicar, p.fecha, p.monto, p.metodo, COALESCE(p.banco,b.nombre) banco,
-      p.referencia, p.conciliado, p.anulado, u.nombre usuario
+      p.referencia, p.conciliado, p.anulado, p.desde_prepago,
+      CASE WHEN EXISTS (SELECT 1 FROM debito_app d WHERE d.k_cliente=p.k_cliente AND d.folio='REVERSA-PAGO-'||p.id) THEN 1 ELSE 0 END prepago_devuelto,
+      u.nombre usuario
     FROM pagos p LEFT JOIN usuarios u ON u.id=p.usuario_id LEFT JOIN bancos b ON b.id=p.banco_id
     WHERE p.k_cliente=? ORDER BY p.id DESC LIMIT 100`, k);
   const hist = (await q.all(`SELECT substr(fecha_factura,1,7) mes, SUM(importe) facturado, SUM(abono) cobrado FROM v_cxc

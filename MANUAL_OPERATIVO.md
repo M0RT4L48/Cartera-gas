@@ -182,7 +182,8 @@ Es la pantalla central de cuentas por cobrar. Muestra todas las facturas de cré
   - Botón **⬇ CSV**: Exporta la lista filtrada con fórmulas seguras contra inyección.
 - **Detalle de Factura (Modal al hacer clic en el renglón):**
   - Desglose completo: Importe original, abonos en Excel, pagos capturados en la app y saldo pendiente actual.
-  - Lista de pagos registrados en la aplicación con opción de **Anular** (restableciendo el saldo).
+  - Lista de pagos registrados en la aplicación con opción de **Anular** (restableciendo el saldo y devolviendo el prepago cuando corresponda).
+  - Si un pago de prepago quedó anulado sin registrar su devolución, aparece **Reparar prepago** para regularizar el saldo a favor.
   - Desglose de despachos de combustible individuales que integran esa factura.
   - Botón para editar la factura (si fue capturada manualmente y no supera abonos previos).
 
@@ -247,7 +248,8 @@ Módulo de control de gestión y seguimiento a clientes morosos.
 2. **Pagos Capturados:**
    - Bitácora completa de todos los cobros registrados en la plataforma.
    - Muestra qué facturas cubrió cada pago o si se encuentra como *Sin aplicar* o *Conciliado*.
-   - Botón para anular pagos activos si se cometió una equivocación.
+   - Botón para anular pagos activos; al anular uno aplicado desde prepago, también se devuelve ese importe al saldo a favor.
+   - Los pagos de prepago que ya estaban anulados pero no tienen devolución muestran **Reparar prepago**.
 
 ---
 

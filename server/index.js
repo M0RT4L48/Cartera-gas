@@ -417,7 +417,9 @@ async function api(req, res, url) {
       filtrarEstaciones(alcance(user, query), 'p.estacion_id', wh, pr);
       if (query.get('q')) { wh.push('(c.cliente LIKE ? OR p.no_factura LIKE ? OR p.referencia LIKE ?)'); const l = `%${query.get('q')}%`; pr.push(l, l, l); }
       return send(res, 200, { rows: await q.all(`SELECT p.id, p.k_cliente, c.cliente, e.nombre estacion, p.no_factura, p.sin_aplicar, p.fecha, p.monto, p.metodo, COALESCE(p.banco,b.nombre) banco, p.referencia, p.notas,
-          p.conciliado, p.anulado, p.creado, u.nombre usuario FROM pagos p JOIN dim_cliente c ON c.k_cliente=p.k_cliente
+          p.conciliado, p.anulado, p.desde_prepago,
+          CASE WHEN EXISTS (SELECT 1 FROM debito_app d WHERE d.k_cliente=p.k_cliente AND d.folio='REVERSA-PAGO-'||p.id) THEN 1 ELSE 0 END prepago_devuelto,
+          p.creado, u.nombre usuario FROM pagos p JOIN dim_cliente c ON c.k_cliente=p.k_cliente
           JOIN dim_estacion e ON e.id=p.estacion_id LEFT JOIN usuarios u ON u.id=p.usuario_id LEFT JOIN bancos b ON b.id=p.banco_id
           ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''} ORDER BY p.id DESC LIMIT 500`, ...pr) });
     }
@@ -659,7 +661,11 @@ async function api(req, res, url) {
           VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
           b.fecha, folioPrep.slice(0, 60), 'CONSUMO', desdePrepagoInput, 0,
           b.k_cliente, cli.estacion_id, user.id, 'Aplicación a CxC', null, null);
-        resIds.prepago_debito_id = 1000000000 + Number(rPrep.lastInsertRowid);
+        const prepagoRefId = Number(rPrep.lastInsertRowid);
+        for (const pagoId of resIds) {
+          await q.run('UPDATE pagos SET prepago_ref_id=? WHERE id=?', prepagoRefId, pagoId);
+        }
+        resIds.prepago_debito_id = 1000000000 + prepagoRefId;
       }
       const saldoSinAplicar = total > 0 ? redondea(total - totalAplicado) : 0;
       if (saldoSinAplicar > Q.EPS) {
@@ -698,11 +704,68 @@ async function api(req, res, url) {
     if (!pg) throw new HttpError(404, 'Pago no encontrado');
     const idsPg = estacionesAsignadas(user);
     if (idsPg.length && !idsPg.includes(pg.estacion_id)) throw new HttpError(403, 'Fuera de tu estación');
-    if (pg.conciliado) throw new HttpError(400, 'El pago ya fue conciliado con el Excel y no puede anularse');
     if (pg.usuario_id !== user.id && user.rol !== 'admin' && !can(user, 'anular_pago')) throw new HttpError(403, 'Solo el administrador o quien lo capturó puede anularlo');
-    await q.run('UPDATE pagos SET anulado=1 WHERE id=?', pg.id);
-    await L.bitacora(user, 'PAGO_ANULADO', `#${pg.id} ${pg.no_factura} $${pg.monto}`, ip(req));
-    return send(res, 200, { ok: true });
+    const resultado = await tx(async () => {
+      const actual = await q.get('SELECT * FROM pagos WHERE id=?', pg.id);
+      if (!actual) throw new HttpError(404, 'Pago no encontrado');
+      if (actual.conciliado) throw new HttpError(400, 'El pago ya fue conciliado con el Excel y no puede anularse');
+      const yaAnulado = Boolean(actual.anulado);
+      if (yaAnulado && !actual.desde_prepago) throw new HttpError(400, 'El pago ya fue anulado');
+      let restaurado = 0;
+      if (actual.desde_prepago) {
+        const folioReversa = `REVERSA-PAGO-${actual.id}`;
+        const reversaExistente = await q.get('SELECT id FROM debito_app WHERE k_cliente=? AND folio=?',
+          actual.k_cliente, folioReversa);
+        if (!reversaExistente) {
+          let prepagoRefId = Number(actual.prepago_ref_id) || 0;
+          if (!prepagoRefId) {
+            const prefijo = 'PREPAGO-CXC-';
+            const movimientos = await q.all(`SELECT id, folio, anulado FROM debito_app
+              WHERE k_cliente=? AND fecha=? AND tipo='CONSUMO' AND folio LIKE ? ORDER BY id`,
+            actual.k_cliente, actual.fecha, `${prefijo}%`);
+            let coincidencias = movimientos.filter((movimiento) =>
+              [movimiento.folio.slice(prefijo.length)].some((referencias) =>
+                referencias === actual.no_factura || referencias.startsWith(`${actual.no_factura},`) ||
+                referencias.endsWith(`,${actual.no_factura}`) || referencias.includes(`,${actual.no_factura},`)));
+            if (coincidencias.length > 1) {
+              const pagosVinculados = await q.all(`SELECT DISTINCT prepago_ref_id FROM pagos
+                WHERE k_cliente=? AND fecha=? AND no_factura=? AND desde_prepago=1
+                  AND prepago_ref_id IS NOT NULL AND id<>?`,
+              actual.k_cliente, actual.fecha, actual.no_factura, actual.id);
+              const referenciasConocidas = new Set(pagosVinculados.map((pago) => Number(pago.prepago_ref_id)));
+              coincidencias = coincidencias.filter((movimiento) => !referenciasConocidas.has(Number(movimiento.id)));
+            }
+            const candidatos = coincidencias.length === 1 ? coincidencias : [];
+            if (candidatos.length !== 1) {
+              throw new HttpError(409, 'No se puede identificar de forma única el prepago aplicado a este pago; no se anuló para evitar alterar incorrectamente el saldo a favor.');
+            }
+            prepagoRefId = candidatos[0].id;
+          }
+          const consumo = await q.get('SELECT * FROM debito_app WHERE id=? AND k_cliente=?', prepagoRefId, actual.k_cliente);
+          if (!consumo || consumo.tipo !== 'CONSUMO') throw new HttpError(409, 'No se encontró el movimiento de prepago relacionado; no se anuló el pago.');
+          if (!actual.prepago_ref_id) {
+            await q.run('UPDATE pagos SET prepago_ref_id=? WHERE id=?', prepagoRefId, actual.id);
+          }
+          if (!consumo.anulado) {
+            await q.run(`INSERT INTO debito_app(fecha,folio,tipo,importe,abono,k_cliente,estacion_id,usuario_id,metodo)
+              VALUES (?,?, 'RECARGA',0,?,?,?,?,?)`,
+            L.hoyISO(), folioReversa, actual.monto, actual.k_cliente, consumo.estacion_id, user.id, 'Devolución de pago prepago');
+            restaurado = redondea(actual.monto);
+          } else if (!yaAnulado) {
+            throw new HttpError(409, 'El consumo relacionado ya está anulado; no se anuló el pago para evitar alterar incorrectamente el saldo a favor.');
+          }
+        }
+      }
+      if (!yaAnulado) {
+        const anulacion = await q.run('UPDATE pagos SET anulado=1 WHERE id=? AND anulado=0', actual.id);
+        if (anulacion.changes !== 1) throw new HttpError(400, 'El pago ya fue anulado');
+      }
+      return { restaurado, yaAnulado };
+    });
+    if (!resultado.yaAnulado || resultado.restaurado) {
+      await L.bitacora(user, 'PAGO_ANULADO', `#${pg.id} ${pg.no_factura} $${pg.monto}${resultado.restaurado ? ` prepago_devuelto:$${resultado.restaurado.toFixed(2)}` : ''}`, ip(req));
+    }
+    return send(res, 200, { ok: true, prepago_restaurado: resultado.restaurado, ya_anulado: resultado.yaAnulado });
   }
 
   if (m === 'POST' && p === '/api/cartera/facturas') {
@@ -844,6 +907,12 @@ async function api(req, res, url) {
     const id = Number(mt[1]) - 1000000000;
     const mv = id > 0 ? await q.get('SELECT * FROM debito_app WHERE id=? AND anulado=0 AND conciliado=0', id) : null;
     if (!mv) throw new HttpError(404, 'Solo pueden anularse movimientos capturados en la aplicación y vigentes');
+    if (mv.tipo === 'CONSUMO' && String(mv.folio || '').startsWith('PREPAGO-CXC-')) {
+      throw new HttpError(400, 'Este consumo está relacionado con pagos de CxC; anula esos pagos desde Cobranza para devolver el prepago correctamente.');
+    }
+    if (String(mv.folio || '').startsWith('REVERSA-PAGO-')) {
+      throw new HttpError(400, 'Esta devolución está ligada a la anulación de un pago y no puede anularse por separado.');
+    }
     if (!can(user, 'debito') && mv.tipo !== 'RECARGA') throw new HttpError(403, 'Supervisor solo puede anular recargas de prepago');
     const idsMv = estacionesAsignadas(user);
     if (idsMv.length && !idsMv.includes(mv.estacion_id)) throw new HttpError(403, 'Fuera de tu estación');
