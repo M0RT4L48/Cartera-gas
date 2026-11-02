@@ -77,10 +77,32 @@ window.CG = (() => {
       <button class="btn small" data-page="${st.page + 1}" ${st.page >= pages ? 'disabled' : ''}>Siguiente ›</button></div>`;
   };
   function bindFilters(root, st, onChange) {
-    let t;
+    let t = null;
+    let lastSnapshot = '';
     const set = (el) => { st[el.dataset.f] = el.value; st.page = 1; };
-    root.addEventListener('input', (e) => { const el = e.target.closest('[data-f]'); if (!el || el.tagName === 'SELECT' || el.type === 'date') return; set(el); clearTimeout(t); t = setTimeout(onChange, 300); });
-    root.addEventListener('change', (e) => { const el = e.target.closest('[data-f]'); if (!el) return; set(el); clearTimeout(t); onChange(); });
+    const snapshot = () => JSON.stringify([...root.querySelectorAll('[data-f]')].map((el) => [el.dataset.f, el.value]));
+    const apply = () => {
+      t = null;
+      lastSnapshot = snapshot();
+      onChange();
+    };
+    lastSnapshot = snapshot();
+    root.addEventListener('input', (e) => {
+      const el = e.target.closest('[data-f]');
+      if (!el || el.tagName === 'SELECT' || el.type === 'date') return;
+      set(el);
+      clearTimeout(t);
+      t = setTimeout(apply, 300);
+    });
+    root.addEventListener('change', (e) => {
+      const el = e.target.closest('[data-f]');
+      if (!el) return;
+      set(el);
+      if (t !== null) {
+        clearTimeout(t);
+        apply();
+      } else if (snapshot() !== lastSnapshot) apply();
+    });
   }
   const opt = (v, label, cur) => html`<option value="${v}" ${String(cur) === String(v) ? 'selected' : ''}>${label}</option>`;
 
