@@ -540,8 +540,8 @@
         <label>Cliente<input value="${cliente}" readonly></label>
         ${puedeFacturar ? html`<label>Folio / No. factura<input name="no_factura" maxlength="80" required></label>
           <label>Fecha de factura<input name="fecha_factura" type="date" max="${hoyLocal()}" value="${hoyLocal()}" required></label>` : ''}
-        <div class="full tablewrap nomax"><table><thead><tr><th>${puedeFacturar ? html`<input type="checkbox" id="seleccionarTodosDespachos" checked aria-label="Seleccionar todos los despachos">` : ''}</th><th>Fecha</th><th>Despacho</th><th>Producto</th><th>Grupo</th><th class="n">Pendiente</th><th></th></tr></thead><tbody id="despachosEmitir">
-          ${pendientes.map((d) => html`<tr><td>${puedeFacturar ? html`<input type="checkbox" name="despacho_id" value="${d.id}" data-monto="${Math.max(0, d.monto)}" checked>` : ''}</td>
+        <div class="full tablewrap nomax"><table><thead><tr><th>${puedeFacturar ? html`<input type="checkbox" id="seleccionarTodosDespachos" checked aria-label="Seleccionar todos los despachos">` : ''}</th><th><button type="button" class="btn small" data-sort-despacho="fecha_despacho">Fecha</button></th><th><button type="button" class="btn small" data-sort-despacho="despacho">Despacho</button></th><th><button type="button" class="btn small" data-sort-despacho="producto">Producto</button></th><th><button type="button" class="btn small" data-sort-despacho="grupo">Grupo</button></th><th class="n"><button type="button" class="btn small" data-sort-despacho="monto">Pendiente</button></th><th></th></tr></thead><tbody id="despachosEmitir">
+          ${pendientes.map((d) => html`<tr data-despacho-id="${d.id}"><td>${puedeFacturar ? html`<input type="checkbox" name="despacho_id" value="${d.id}" data-monto="${Math.max(0, d.monto)}" checked>` : ''}</td>
             <td>${fdate(d.fecha_despacho)}</td><td>${d.despacho || ''}</td><td>${d.producto || ''}</td><td>${d.grupo || ''}</td><td class="n">${money(d.monto, 2)}</td>
             <td>${puedeEditarDespacho ? html`<button type="button" class="btn small" data-despacho-action="editar" data-id="${d.id}" aria-label="Editar despacho ${d.despacho || ''}" title="Editar despacho">
               <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg></button>` : ''}</td></tr>`)}</tbody>
@@ -551,6 +551,31 @@
       </form>`, { wide: true });
     const form = $('#formEmitirFacturaCliente');
     const checks = () => [...form.querySelectorAll('input[name="despacho_id"]')];
+    let columnaOrdenDespachos = '', direccionOrdenDespachos = 'asc';
+    form.querySelector('thead').addEventListener('click', (event) => {
+      const boton = event.target.closest('[data-sort-despacho]');
+      if (!boton) return;
+      const columna = boton.dataset.sortDespacho;
+      direccionOrdenDespachos = columna === columnaOrdenDespachos && direccionOrdenDespachos === 'asc' ? 'desc' : 'asc';
+      columnaOrdenDespachos = columna;
+      const comparador = (a, b) => {
+        const valorA = a[columna], valorB = b[columna];
+        const resultado = columna === 'monto'
+          ? Number(valorA || 0) - Number(valorB || 0)
+          : String(valorA || '').localeCompare(String(valorB || ''), 'es', { numeric: true, sensitivity: 'base' });
+        return (direccionOrdenDespachos === 'asc' ? resultado : -resultado) || Number(a.id) - Number(b.id);
+      };
+      const filasPorId = new Map([...$('#despachosEmitir').rows].map((fila) => [fila.dataset.despachoId, fila]));
+      pendientes.slice().sort(comparador).forEach((despacho) => {
+        const fila = filasPorId.get(String(despacho.id));
+        if (fila) $('#despachosEmitir').append(fila);
+      });
+      form.querySelectorAll('[data-sort-despacho]').forEach((encabezado) => {
+        const activo = encabezado === boton;
+        encabezado.textContent = encabezado.textContent.replace(/[↑↓]$/, '').trim() + (activo ? (direccionOrdenDespachos === 'asc' ? ' ↑' : ' ↓') : '');
+        encabezado.setAttribute('aria-sort', activo ? (direccionOrdenDespachos === 'asc' ? 'ascending' : 'descending') : 'none');
+      });
+    });
     const renderDespacho = (row, despacho) => {
       const celdas = row.cells;
       celdas[1].textContent = fdate(despacho.fecha_despacho);
