@@ -563,7 +563,10 @@
         fila.hidden = producto === '__sin_producto__'
           ? Boolean(valor)
           : Boolean(producto) && valor.toLocaleLowerCase('es-MX') !== producto.toLocaleLowerCase('es-MX');
+        const checkbox = fila.querySelector('input[name="despacho_id"]');
+        if (checkbox) checkbox.checked = !fila.hidden;
       });
+      updateTotal();
     };
     $('#filtroProductoDespachos').addEventListener('change', aplicarFiltroProducto);
     let columnaOrdenDespachos = '', direccionOrdenDespachos = 'asc';
@@ -688,11 +691,14 @@
       if (!puedeFacturar) return;
       const total = checks().filter((c) => c.checked).reduce((sum, c) => sum + Number(c.dataset.monto), 0);
       $('#totalSeleccionado').textContent = money(total, 2);
-      const all = checks();
+      const all = checks().filter((c) => !c.closest('tr').hidden);
       $('#seleccionarTodosDespachos').checked = all.length > 0 && all.every((c) => c.checked);
       $('#seleccionarTodosDespachos').indeterminate = all.some((c) => c.checked) && !all.every((c) => c.checked);
     };
-    if (puedeFacturar) $('#seleccionarTodosDespachos').onchange = (e) => { checks().forEach((c) => { c.checked = e.target.checked; }); updateTotal(); };
+    if (puedeFacturar) $('#seleccionarTodosDespachos').onchange = (e) => {
+      checks().filter((c) => !c.closest('tr').hidden).forEach((c) => { c.checked = e.target.checked; });
+      updateTotal();
+    };
     $('#despachosEmitir').onchange = updateTotal;
     updateTotal();
     form.onsubmit = async (e) => {
