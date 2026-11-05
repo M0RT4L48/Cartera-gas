@@ -441,7 +441,16 @@
 
   // =============== POR FACTURAR ===============
   CG.routes['por-facturar'] = async () => {
-    const st = { q: '' };
+    const st = { q: '', sort: 'monto', dir: 'desc' };
+    const columnasOrdenables = [
+      ['cliente', 'Cliente', 'text'],
+      ['estacion', 'Estación', 'text'],
+      ['despachos', 'Despachos', 'number'],
+      ['monto', 'Importe', 'number'],
+      ['mas_antiguo', 'Más antiguo', 'date'],
+      ['mas_reciente', 'Más reciente', 'date'],
+      ['dias_antiguedad', 'Antigüedad (días)', 'number'],
+    ];
     const puedeFacturar = can('facturas');
     const puedeEditarDespacho = can('editar_despacho');
     let lista = [];
@@ -450,11 +459,24 @@
     const load = async () => {
       try {
         const r = await api('/api/por-facturar?' + qs(gp({ q: st.q })));
+        const filas = r.rows.slice().sort((a, b) => {
+          const columna = columnasOrdenables.find(([key]) => key === st.sort);
+          const resultado = columna[2] === 'number'
+            ? Number(a[st.sort] || 0) - Number(b[st.sort] || 0)
+            : String(a[st.sort] || '').localeCompare(String(b[st.sort] || ''), 'es', { numeric: true, sensitivity: 'base' });
+          return (st.dir === 'asc' ? resultado : -resultado) ||
+            String(a.cliente || '').localeCompare(String(b.cliente || ''), 'es', { sensitivity: 'base' });
+        });
+        const encabezadoOrden = (key, label, align = '') => html`<th class="${align}">
+          <button type="button" class="btn small" data-sort-por-facturar="${key}"
+            aria-sort="${st.sort === key ? (st.dir === 'asc' ? 'ascending' : 'descending') : 'none'}">
+            ${label}${st.sort === key ? (st.dir === 'asc' ? ' ↑' : ' ↓') : ''}
+          </button></th>`;
         $('#tbl').innerHTML = html`<div class="grid g3" style="margin-bottom:14px">
           <div class="kpi mini k-amber"><span class="l">Importe por facturar</span><span class="v">${money(r.total_monto)}</span></div>
           <div class="kpi mini"><span class="l">Despachos</span><span class="v">${int(r.total_despachos)}</span></div></div>
-          <div class="tablewrap"><table><thead><tr><th>Cliente</th><th>Estación</th><th class="n">Despachos</th><th class="n">Importe</th><th>Más antiguo</th><th>Más reciente</th><th class="n">Antigüedad (días)</th><th></th></tr></thead><tbody>
-          ${r.rows.length ? r.rows.map((x) => html`<tr class="click" data-go="#/cliente/${encodeURIComponent(x.k_cliente)}"><td class="wrap">${x.cliente}</td><td>${corto(x.estacion)}</td><td class="n">${x.despachos}</td>
+          <div class="tablewrap"><table><thead><tr>${encabezadoOrden('cliente', 'Cliente')}${encabezadoOrden('estacion', 'Estación')}${encabezadoOrden('despachos', 'Despachos', 'n')}${encabezadoOrden('monto', 'Importe', 'n')}${encabezadoOrden('mas_antiguo', 'Más antiguo')}${encabezadoOrden('mas_reciente', 'Más reciente')}${encabezadoOrden('dias_antiguedad', 'Antigüedad (días)', 'n')}<th></th></tr></thead><tbody>
+          ${filas.length ? filas.map((x) => html`<tr class="click" data-go="#/cliente/${encodeURIComponent(x.k_cliente)}"><td class="wrap">${x.cliente}</td><td>${corto(x.estacion)}</td><td class="n">${x.despachos}</td>
             <td class="n strong">${money(x.monto)}</td><td>${fdate(x.mas_antiguo)}</td><td>${fdate(x.mas_reciente)}</td><td class="n ${x.dias_antiguedad > 15 ? 'neg' : ''}">${x.dias_antiguedad}</td>
             <td>${puedeFacturar || puedeEditarDespacho ? html`<button class="btn small" data-act="emitirFacturaCliente" data-k="${x.k_cliente}" data-cliente="${x.cliente}">${puedeFacturar ? 'Seleccionar despachos' : 'Modificar importes'}</button>` : ''}</td></tr>`) : html`<tr><td colspan="8" class="empty">Sin despachos por facturar.</td></tr>`}</tbody></table></div>`.s;
       } catch (e) { $('#tbl').innerHTML = html`<div class="note">${e.message}</div>`.s; }
@@ -481,6 +503,14 @@
         <button class="btn dark" type="submit" style="margin-top:12px">Guardar por facturar</button>
       </form>` : ''}
       <div class="bar" id="filtros"><label>Buscar cliente<input data-f="q" placeholder="Nombre…" style="min-width:240px"></label></div><div id="tbl"></div>`);
+    $('#tbl').addEventListener('click', (event) => {
+      const boton = event.target.closest('[data-sort-por-facturar]');
+      if (!boton) return;
+      const columna = boton.dataset.sortPorFacturar;
+      st.dir = st.sort === columna && st.dir === 'asc' ? 'desc' : 'asc';
+      st.sort = columna;
+      load();
+    });
     if (can('facturas')) {
       $('#formCargaPorFacturar').onsubmit = async (e) => {
         e.preventDefault();
