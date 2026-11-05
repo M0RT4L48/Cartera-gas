@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS fact_cxc (          -- una fila por despacho
   id                INTEGER PRIMARY KEY,       -- Indice del Excel
   fecha_despacho    TEXT,
   despacho          TEXT,
+  producto          TEXT,
   importe           REAL NOT NULL DEFAULT 0,
   abono             REAL NOT NULL DEFAULT 0,
   k_cliente         TEXT NOT NULL,
@@ -176,6 +177,7 @@ CREATE TABLE IF NOT EXISTS fact_cxc_app (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
   fecha_despacho    TEXT NOT NULL,
   despacho          TEXT,
+  producto          TEXT,
   importe           REAL NOT NULL,
   abono             REAL NOT NULL DEFAULT 0,
   k_cliente         TEXT NOT NULL,
@@ -238,11 +240,11 @@ CREATE VIEW v_debito AS
 DROP VIEW IF EXISTS v_fact_factura;
 DROP VIEW IF EXISTS v_cxc;
 CREATE VIEW v_cxc AS
-  SELECT id, fecha_despacho, despacho, importe, abono, k_cliente, estacion_id, estatus, grupo,
+  SELECT id, fecha_despacho, despacho, producto, importe, abono, k_cliente, estacion_id, estatus, grupo,
          fecha_factura, no_factura, fecha_pago, fecha_vencimiento, 'excel' AS origen
     FROM fact_cxc
   UNION ALL
-  SELECT 2000000000+id, fecha_despacho, despacho, importe, abono, k_cliente, estacion_id, estatus, grupo,
+  SELECT 2000000000+id, fecha_despacho, despacho, producto, importe, abono, k_cliente, estacion_id, estatus, grupo,
          fecha_factura, no_factura, fecha_pago, fecha_vencimiento, 'app'
     FROM fact_cxc_app;
 

@@ -522,13 +522,25 @@ server.listen(0, '127.0.0.1', async () => {
     }
     assert.equal((await call('s', 'GET', '/api/cliente?k=' + enc(clienteSegundaEstacion.data.k_cliente))).status, 200);
     const pendiente = await call('a', 'POST', '/api/por-facturar', {
-      k_cliente: k, importe: 80, fecha_despacho: '2026-10-25', despacho: `DESP-SUP-${process.pid}`,
+      k_cliente: k, importe: 80, fecha_despacho: '2026-10-25', despacho: `DESP-SUP-${process.pid}`, producto: 'Gas LP',
     });
     assert.equal(pendiente.status, 201, JSON.stringify(pendiente.data));
+    assert.equal(pendiente.data.producto, 'Gas LP');
     const edicionDespacho = await call('s', 'PUT', '/api/por-facturar/' + (2000000000 + pendiente.data.id), {
-      fecha_despacho: '2026-10-26', despacho: `DESP-SUP-${process.pid}`, grupo: 'SUPERVISOR', monto: 95,
+      fecha_despacho: '2026-10-26', despacho: `DESP-SUP-${process.pid}`, producto: 'Gas LP Editado', grupo: 'SUPERVISOR', monto: 95,
     });
     assert.equal(edicionDespacho.status, 200, JSON.stringify(edicionDespacho.data));
+    assert.equal(edicionDespacho.data.producto, 'Gas LP Editado');
+    const pendientesConProducto = (await call('a', 'GET', '/api/por-facturar?k=' + enc(k))).data.rows[0].items;
+    assert.equal(pendientesConProducto.find((item) => item.id === 2000000000 + pendiente.data.id).producto, 'Gas LP Editado');
+    assert.equal((await L.q.get('SELECT producto FROM fact_cxc_app WHERE id=?', pendiente.data.id)).producto, 'Gas LP Editado');
+    const detalleConProducto = await call('a', 'GET', '/api/cliente?k=' + enc(k));
+    assert.equal(detalleConProducto.data.por_facturar.find((item) => item.id === 2000000000 + pendiente.data.id).producto, 'Gas LP Editado');
+    const pendienteSinProducto = await call('a', 'POST', '/api/por-facturar', {
+      k_cliente: k, importe: 10, fecha_despacho: '2026-10-25', despacho: `DESP-OPC-${process.pid}`,
+    });
+    assert.equal(pendienteSinProducto.status, 201, JSON.stringify(pendienteSinProducto.data));
+    assert.equal(pendienteSinProducto.data.producto, null, 'Producto debe ser opcional');
 
     const abono = await call('a', 'POST', '/api/debito/movimientos', {
       k_cliente: k, tipo: 'ABONO', monto: 100, fecha: '2026-10-25', folio: `ABONO-SUP-${process.pid}`, metodo: 'Efectivo',

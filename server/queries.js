@@ -277,7 +277,7 @@ async function clienteDetalle({ corte, k }) {
   const abiertas = await q.all(`SELECT f.no_factura, f.fecha_factura, f.fecha_vencimiento, f.despachos, f.importe, f.abono, f.pagos_app, f.saldo,
       f.dias_vencido, f.estacion_id, ${ESTADO_SQL} estado, ${RANGO_SQL()} rango FROM ${FAC(corte)} f
     WHERE f.k_cliente=? AND f.abierta=1 AND f.saldo>${EPS} ORDER BY COALESCE(f.fecha_vencimiento, f.fecha_factura, f.ultimo_despacho), f.no_factura`, k);
-  const porFacturar = await q.all(`SELECT id, fecha_despacho, despacho, importe, abono, grupo,
+  const porFacturar = await q.all(`SELECT id, fecha_despacho, despacho, producto, importe, abono, grupo,
       CAST(julianday(?)-julianday(fecha_despacho) AS INTEGER) dias FROM v_cxc
     WHERE k_cliente=? AND estatus='POR FACTURAR' AND importe-abono<>0 ORDER BY fecha_despacho LIMIT 300`, corte, k);
   const debito = await q.all(`SELECT d.id, d.fecha, d.folio, d.tipo, d.importe, d.abono, d.grupo, d.origen,
@@ -319,7 +319,7 @@ async function porFacturar(p) {
     ${from} GROUP BY f.k_cliente ORDER BY monto DESC LIMIT 500`, p.corte, ...pr);
   const tot = await q.get(`SELECT COALESCE(SUM(f.importe-f.abono),0) monto, COUNT(*) n ${from}`, ...pr);
   if (p.k && rows.length) {
-    rows[0].items = await q.all(`SELECT f.id, f.fecha_despacho, f.despacho, f.grupo, f.importe, f.abono,
+    rows[0].items = await q.all(`SELECT f.id, f.fecha_despacho, f.despacho, f.producto, f.grupo, f.importe, f.abono,
         f.importe-f.abono AS monto, f.origen
       ${from} ORDER BY f.fecha_despacho, f.id`, ...pr);
   }

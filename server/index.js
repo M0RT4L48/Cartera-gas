@@ -537,7 +537,7 @@ async function api(req, res, url) {
     if (!can(user, 'facturas') && !can(user, 'editar_despacho')) throw new HttpError(403, 'No tienes permiso para esta acción');
     const id = Number(mt[1]);
     if (!Number.isSafeInteger(id) || id <= 0) throw new HttpError(400, 'Identificador de despacho inválido');
-    const despachoActual = await q.get(`SELECT id,origen,k_cliente,estacion_id,fecha_despacho,despacho,grupo,importe,abono,estatus
+    const despachoActual = await q.get(`SELECT id,origen,k_cliente,estacion_id,fecha_despacho,despacho,producto,grupo,importe,abono,estatus
       FROM v_cxc WHERE id=?`, id);
     if (!despachoActual || despachoActual.estatus !== 'POR FACTURAR' || despachoActual.importe - despachoActual.abono <= 0) {
       throw new HttpError(404, 'El despacho no existe o ya no está pendiente de facturar');
@@ -549,6 +549,7 @@ async function api(req, res, url) {
       throw new HttpError(400, 'La fecha de despacho es inválida o futura');
     }
     const despacho = txt(body.despacho, 80) || null;
+    const producto = txt(body.producto, 120) || null;
     const grupo = txt(body.grupo, 60) || null;
     const montoPendiente = redondea(L.num(body.monto, -1));
     const importe = redondea(montoPendiente + Number(despachoActual.abono || 0));
@@ -566,15 +567,15 @@ async function api(req, res, url) {
     const tabla = despachoActual.origen === 'app' ? 'fact_cxc_app' : 'fact_cxc';
     const idInterno = despachoActual.origen === 'app' ? id - 2000000000 : id;
     const resultado = await q.run(`UPDATE ${tabla}
-      SET fecha_despacho=?, despacho=?, grupo=?, importe=?
+      SET fecha_despacho=?, despacho=?, producto=?, grupo=?, importe=?
       WHERE id=? AND estatus='POR FACTURAR' AND importe-abono>0`,
-    fechaDespacho, despacho, grupo, importe, idInterno);
+    fechaDespacho, despacho, producto, grupo, importe, idInterno);
     if (resultado.changes !== 1) throw new HttpError(409, 'El despacho cambió o dejó de estar pendiente; vuelve a cargar la lista');
     await L.bitacora(user, 'DESPACHO_EDITA',
-      `${despachoActual.k_cliente} despacho #${id}: fecha ${despachoActual.fecha_despacho}->${fechaDespacho}, despacho ${despachoActual.despacho || ''}->${despacho || ''}, grupo ${despachoActual.grupo || ''}->${grupo || ''}, pendiente ${redondea(despachoActual.importe - despachoActual.abono)}->${montoPendiente}`,
+      `${despachoActual.k_cliente} despacho #${id}: fecha ${despachoActual.fecha_despacho}->${fechaDespacho}, despacho ${despachoActual.despacho || ''}->${despacho || ''}, producto ${despachoActual.producto || ''}->${producto || ''}, grupo ${despachoActual.grupo || ''}->${grupo || ''}, pendiente ${redondea(despachoActual.importe - despachoActual.abono)}->${montoPendiente}`,
       ip(req));
     return send(res, 200, {
-      ok: true, id, fecha_despacho: fechaDespacho, despacho, grupo,
+      ok: true, id, fecha_despacho: fechaDespacho, despacho, producto, grupo,
       importe, abono: Number(despachoActual.abono || 0), monto: montoPendiente,
     });
   }
@@ -588,12 +589,13 @@ async function api(req, res, url) {
     if (!L.esFecha(fechaDespacho) || fechaDespacho > L.hoyISO()) throw new HttpError(400, 'La fecha de despacho es inválida o futura');
     if (!(importe > 0) || importe > 1e9) throw new HttpError(400, 'El importe debe ser mayor a cero y no exceder $1,000,000,000');
     const despacho = txt(b.despacho, 80) || 'PENDIENTE';
+    const producto = txt(b.producto, 120) || null;
     const noFactura = `POR-FACTURAR-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const r = await q.run(`INSERT INTO fact_cxc_app(fecha_despacho,despacho,importe,abono,k_cliente,estacion_id,estatus,grupo,fecha_factura,no_factura,fecha_vencimiento,usuario_id)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, fechaDespacho, despacho, importe, 0, cliente.k_cliente, cliente.estacion_id, 'POR FACTURAR',
+    const r = await q.run(`INSERT INTO fact_cxc_app(fecha_despacho,despacho,producto,importe,abono,k_cliente,estacion_id,estatus,grupo,fecha_factura,no_factura,fecha_vencimiento,usuario_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, fechaDespacho, despacho, producto, importe, 0, cliente.k_cliente, cliente.estacion_id, 'POR FACTURAR',
       txt(b.grupo, 60) || 'PENDIENTE', fechaDespacho, noFactura, null, user.id);
     await L.bitacora(user, 'POR_FACTURAR_ALTA', `${cliente.k_cliente} $${importe} ${noFactura}`, ip(req));
-    return send(res, 201, { ok: true, id: Number(r.lastInsertRowid), k_cliente: cliente.k_cliente, fecha_despacho: fechaDespacho, importe, no_factura: noFactura });
+    return send(res, 201, { ok: true, id: Number(r.lastInsertRowid), k_cliente: cliente.k_cliente, fecha_despacho: fechaDespacho, despacho, producto, importe, no_factura: noFactura });
   }
 
   // ----- pagos CxC -----

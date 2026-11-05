@@ -23,6 +23,8 @@ const client = createClient(remote
   : { url: pathToFileURL(DB_PATH).href });
 const transactionContext = new AsyncLocalStorage();
 const MIGRATIONS = [
+  ['fact_cxc', 'producto', 'TEXT'],
+  ['fact_cxc_app', 'producto', 'TEXT'],
   ['pagos', 'sin_aplicar', 'INTEGER NOT NULL DEFAULT 0'],
   ['pagos', 'banco_id', 'INTEGER'],
   ['pagos', 'banco', 'TEXT'],
@@ -64,7 +66,10 @@ const tx = async (fn) => {
 
 const ready = (async () => {
   const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-  await client.executeMultiple(schema.replace(/^\s*PRAGMA foreign_keys\s*=\s*OFF;\s*$/im, ''));
+  const schemaSql = schema.replace(/^\s*PRAGMA foreign_keys\s*=\s*OFF;\s*$/im, '');
+  const viewsStart = schemaSql.indexOf('-- Debito unificado:');
+  if (viewsStart < 0) throw new Error('No se encontró la sección de vistas en schema.sql.');
+  await client.executeMultiple(schemaSql.slice(0, viewsStart));
   await client.execute('PRAGMA foreign_keys = ON');
   for (const [table, column, definition] of MIGRATIONS) {
     const columns = await q.all(`PRAGMA table_info(${table})`);
@@ -72,6 +77,7 @@ const ready = (async () => {
       await q.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     }
   }
+  await client.executeMultiple(schemaSql.slice(viewsStart));
   const referenciasEstaciones = await q.all('PRAGMA foreign_key_list(usuario_estaciones)');
   if (!referenciasEstaciones.some((referencia) => referencia.table === 'usuarios' && referencia.from === 'usuario_id') ||
       !referenciasEstaciones.some((referencia) => referencia.table === 'dim_estacion' && referencia.from === 'estacion_id')) {

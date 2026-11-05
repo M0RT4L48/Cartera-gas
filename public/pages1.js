@@ -442,8 +442,8 @@
         ${d.abiertas.map((f) => html`<tr class="click" data-act="factura" data-k="${c.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}"><td>${f.no_factura}</td><td>${fdate(f.fecha_factura)}</td><td>${fdate(f.fecha_vencimiento)}</td>
           <td class="n">${diasCell(f.dias_vencido)}</td><td>${badge(f.estado)}</td><td class="n">${money(f.importe)}</td><td class="n strong">${money(f.saldo)}</td>
           <td>${can('pagos') ? html`<button class="btn small" data-act="pago" data-k="${c.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">Pago</button>` : ''}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">Sin facturas abiertas.</div>`,
-      porfacturar: () => d.por_facturar.length ? html`<div class="tablewrap nomax"><table><thead><tr><th>Fecha despacho</th><th>Despacho</th><th>Grupo</th><th class="n">Días</th><th class="n">Importe</th></tr></thead><tbody>
-        ${d.por_facturar.map((x) => html`<tr><td>${fdate(x.fecha_despacho)}</td><td>${x.despacho}</td><td>${x.grupo}</td><td class="n">${x.dias}</td><td class="n">${money(x.importe - x.abono, 2)}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">Sin despachos por facturar.</div>`,
+      porfacturar: () => d.por_facturar.length ? html`<div class="tablewrap nomax"><table><thead><tr><th>Fecha despacho</th><th>Despacho</th><th>Producto</th><th>Grupo</th><th class="n">Días</th><th class="n">Importe</th></tr></thead><tbody>
+        ${d.por_facturar.map((x) => html`<tr><td>${fdate(x.fecha_despacho)}</td><td>${x.despacho}</td><td>${x.producto || ''}</td><td>${x.grupo}</td><td class="n">${x.dias}</td><td class="n">${money(x.importe - x.abono, 2)}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">Sin despachos por facturar.</div>`,
       debito: () => html`<div class="grid g3" style="margin-bottom:12px">
           <div class="kpi mini k-green"><span class="l">Abonos (recargas)</span><span class="v">${money(d.debito_resumen.recargas)}</span></div>
           <div class="kpi mini"><span class="l">Consumos</span><span class="v">${money(d.debito_resumen.consumos)}</span></div>
