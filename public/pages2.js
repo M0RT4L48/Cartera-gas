@@ -186,12 +186,15 @@
     };
 
     const formFactura = (factura = null) => {
+      const clientePick = factura ? null : clientePicker('factAnticipoCliente', clientes, {
+        placeholder: 'Escribe para buscar cliente…',
+      });
       modal(html`
         <h2>${factura ? 'Editar Factura de Anticipo' : 'Nueva Factura de Anticipo'}</h2>
         ${factura && factura.importe_aplicado > 0 ? html`<div class="note info">Una factura con aplicaciones no puede editarse. Cancela las aplicaciones primero.</div>` : ''}
         <form id="formAnticipo" class="form">
-          <label>Cliente<select name="k_cliente" required ${factura ? 'disabled' : ''}>
-            ${clientes.map((c) => opt(c.k_cliente, `${c.cliente} · ${c.estacion}`, factura ? factura.k_cliente : ''))}</select></label>
+          ${factura ? html`<label>Cliente<select name="k_cliente" disabled>
+            ${clientes.map((c) => opt(c.k_cliente, `${c.cliente} · ${c.estacion}`, factura.k_cliente))}</select></label>` : html`<label>Cliente${clientePick.html}</label>`}
           ${factura ? html`<input type="hidden" name="k_cliente" value="${factura.k_cliente}">` : ''}
           <label>Serie<input name="serie" maxlength="30" value="${factura ? factura.serie || '' : ''}"></label>
           <label>Folio<input name="folio" maxlength="80" value="${factura ? factura.folio : ''}" required></label>
@@ -212,6 +215,11 @@
         btn.disabled = true; $('#anticipoErr').textContent = '';
         try {
           const body = Object.fromEntries(new FormData(form));
+          if (!factura) {
+            const cliente = clientePick.resolver();
+            if (!cliente) throw new Error('Selecciona un cliente válido de la lista.');
+            body.k_cliente = cliente.k_cliente;
+          }
           await api(factura ? `/api/facturas-anticipo/${factura.id}` : '/api/facturas-anticipo',
             { method: factura ? 'PUT' : 'POST', body });
           toast(factura ? 'Factura de Anticipo actualizada' : 'Factura de Anticipo registrada');
@@ -283,8 +291,13 @@
     loading();
     let clientes;
     try { clientes = await CG.clientesLista(false); } catch (e) { return errorView(e); }
+    const clientePick = clientePicker('selClienteAnticipo', clientes, {
+      placeholder: 'Escribe para buscar cliente…',
+    });
     const st = { k: query.k || '', q: '', estado: '', page: 1 };
     let opciones = { anticipos: [], facturas: [] };
+    let solicitudOpciones = 0;
+    let clienteOpciones = null;
     const renderOptions = () => {
       const anticipoSelect = $('#selAnticipo'), facturaSelect = $('#selFacturaDespacho');
       if (!anticipoSelect || !facturaSelect) return;
@@ -296,8 +309,21 @@
       $('#resumenFactura').innerHTML = '';
     };
     const cargarOpciones = async () => {
-      const k = $('#selClienteAnticipo').value;
-      opciones = k ? await api('/api/aplicaciones-anticipo/opciones?' + qs(gp({ k }))) : { anticipos: [], facturas: [] };
+      const cliente = clientePick.resolver();
+      const k = cliente ? cliente.k_cliente : '';
+      if (k === clienteOpciones) return;
+      clienteOpciones = k;
+      const solicitud = ++solicitudOpciones;
+      if (!k) {
+        opciones = { anticipos: [], facturas: [] };
+        renderOptions();
+        return;
+      }
+      opciones = { anticipos: [], facturas: [] };
+      renderOptions();
+      const resultado = await api('/api/aplicaciones-anticipo/opciones?' + qs(gp({ k })));
+      if (solicitud !== solicitudOpciones) return;
+      opciones = resultado;
       renderOptions();
     };
     const loadHistory = async () => {
@@ -315,8 +341,7 @@
       <div class="h"><h2>Aplicación de Factura de Anticipo</h2><p>Aplica saldo individual de una factura de anticipo a una factura existente; el importe aplicado reduce el saldo pendiente en Cartera.</p></div>
       <div class="card" style="margin-bottom:18px"><h3>Nueva aplicación</h3>
         <div class="form">
-          <label>Cliente<select id="selClienteAnticipo"><option value="">Selecciona un cliente…</option>
-            ${clientes.map((c) => opt(c.k_cliente, `${c.cliente} · ${c.estacion}`, st.k))}</select></label>
+          <label>Cliente${clientePick.html}</label>
           <label>Factura de Anticipo<select id="selAnticipo"><option value="">Selecciona un cliente primero…</option></select></label>
           <label>Factura existente del despacho<select id="selFacturaDespacho"><option value="">Selecciona un cliente primero…</option></select></label>
           <div id="resumenAnticipo" class="full"></div><div id="resumenFactura" class="full"></div>
@@ -338,10 +363,18 @@
       const pg = e.target.closest('[data-page]');
       if (pg && !pg.disabled) { st.page = Number(pg.dataset.page); loadHistory(); }
     };
-    $('#selClienteAnticipo').onchange = async () => {
+    const clienteAplicacion = $('#selClienteAnticipo');
+    const cambiarClienteAplicacion = async () => {
       $('#aplicacionErr').textContent = '';
       try { await cargarOpciones(); } catch (er) { $('#aplicacionErr').textContent = er.message; }
     };
+    clienteAplicacion.addEventListener('input', cambiarClienteAplicacion);
+    clienteAplicacion.addEventListener('change', cambiarClienteAplicacion);
+    const clienteInicial = clientes.find((cliente) => cliente.k_cliente === st.k);
+    if (clienteInicial) {
+      clienteAplicacion.value = clientePick.etiqueta(clienteInicial);
+      clienteAplicacion.dispatchEvent(new Event('change'));
+    }
     $('#selAnticipo').onchange = () => {
       const anticipo = opciones.anticipos.find((a) => Number(a.id) === Number($('#selAnticipo').value));
       $('#resumenAnticipo').innerHTML = anticipo ? html`<div class="note info">Anticipo ${anticipo.serie ? `${anticipo.serie}-` : ''}${anticipo.folio} · UUID ${anticipo.uuid_fiscal || '—'} · Original ${money(anticipo.importe_original, 2)} · Aplicado ${money(anticipo.importe_aplicado, 2)} · Disponible ${money(anticipo.saldo_disponible, 2)} ${anticipo.moneda} · ${anticipo.estado}</div>`.s : '';
@@ -383,7 +416,7 @@
       } catch (er) { $('#aplicacionErr').textContent = er.message; }
       finally { btn.disabled = false; }
     });
-    $('#selClienteAnticipo').dispatchEvent(new Event('change'));
+    if (!clienteInicial) clienteAplicacion.dispatchEvent(new Event('change'));
     loadHistory();
     CG.acts.cancelarAplicacionAnticipo = async (el) => {
       const motivo = prompt('Motivo de cancelación de la aplicación:');
