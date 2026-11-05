@@ -21,7 +21,7 @@
    - [5. Cobranza](#5-cobranza)
    - [6. Alertas](#6-alertas)
    - [7. Clientes y Ficha de Cliente](#7-clientes-y-ficha-de-cliente)
-   - [8. Catálogos (Bancos y Métodos de Pago)](#8-catálogos-bancos-y-métodos-de-pago)
+   - [8. Catálogos (Bancos, Métodos de Pago y Productos)](#8-catálogos-bancos-métodos-de-pago-y-productos)
    - [9. Usuarios y Roles / Bitácora](#9-usuarios-y-roles--bitácora)
    - [10. Carga de Datos](#10-carga-de-datos)
 6. [Reglas de Negocio, Fórmulas y Cálculos](#6-reglas-de-negocio-fórmulas-y-cálculos)
@@ -212,6 +212,7 @@ Concentra todos aquellos despachos de combustible otorgados a crédito que han s
 #### Funciones Principales:
 - **Resumen:** Indicadores de monto total por facturar y cantidad de despachos.
 - **Formulario "Registrar monto pendiente por facturar":** Permite ingresar consumos a crédito pendientes de timbrar con fecha y descripción.
+- **Carga de despachos por Excel:** La primera hoja debe tener exactamente estas columnas y en este orden: `FECHA`, `DESPACHO`, `IMPORTE`, `ABONO`, `CLIENTE`, `PRODUCTO`, `GRUPO`, `FECHA FACTURA`, `NO. FACTURA`, `FECHA PAGO`. `PRODUCTO` puede quedar vacío; si se captura, debe existir en el catálogo de productos (por ejemplo, Diesel, Premium o Magna).
 - **Tabla por Cliente:** Agrupa los despachos pendientes mostrando fecha del más antiguo, fecha del más reciente y días de antigüedad acumulados.
 - **Botón "Seleccionar despachos" (Emisión de Factura):**
   - Abre un modal con la lista de despachos pendientes del cliente.
@@ -290,7 +291,7 @@ Al hacer clic en cualquier cliente en cualquier parte del sistema, se abre su fi
 
 ---
 
-### 8. Catálogos (Bancos y Métodos de Pago)
+### 8. Catálogos (Bancos, Métodos de Pago y Productos)
 Módulo de administración de parámetros de pago. La administración de clientes se realiza exclusivamente en la pestaña **Clientes**.
 
 #### Catálogo de Bancos (Solo Admin):
@@ -299,6 +300,10 @@ Módulo de administración de parámetros de pago. La administración de cliente
 #### Catálogo de Métodos de Pago (Solo Admin):
 - Alta y edición de métodos.
 - Casilla: *"Requiere banco en pagos CxC"*, que fuerza a capturar el banco cuando se use este método en cobranza.
+
+#### Catálogo de Productos (Solo Admin):
+- Alta, edición y eliminación de productos disponibles para los despachos.
+- Un producto asignado a despachos no se puede eliminar; se puede renombrar y los despachos existentes se actualizan.
 
 ---
 

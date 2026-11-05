@@ -10,7 +10,7 @@ from openpyxl.utils.datetime import from_excel
 
 
 COLUMNAS = [
-    'FECHA', 'DESPACHO', 'IMPORTE', 'ABONO', 'CLIENTE', 'GRUPO',
+    'FECHA', 'DESPACHO', 'IMPORTE', 'ABONO', 'CLIENTE', 'PRODUCTO', 'GRUPO',
     'FECHA FACTURA', 'NO. FACTURA', 'FECHA PAGO',
 ]
 
@@ -99,6 +99,7 @@ def main(ruta):
             'importe': monto,
             'abono': abono,
             'cliente': cliente,
+            'producto': texto(valores['PRODUCTO']),
             'grupo': texto(valores['GRUPO']),
             'fecha_factura': fecha(valores['FECHA FACTURA'], numero_fila, 'FECHA FACTURA', errores),
             'no_factura': texto(valores['NO. FACTURA']),

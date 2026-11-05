@@ -88,12 +88,12 @@ Las 4 tarjetas superiores (facturas abiertas, saldo abierto, saldo vencido, sald
 | `fact_factura` | derivada de `CxC` | Agregado de origen por factura |
 | `credito` | `Credito` | Límite financiero y días de crédito |
 
-Tablas de la aplicación: `usuarios`, `sesiones`, `pagos`, `debito_app`, `fact_cxc_app`, `cliente_extra`, `gestiones`, `bitacora`, `bancos` y `metodos_pago`. Las cargas parciales las conservan; la carga completa las reinicia y vuelve a crear los catálogos base y el administrador inicial. Las vistas `v_cxc` y `v_fact_factura` unifican los saldos del Excel y las facturas capturadas en la aplicación.
+Tablas de la aplicación: `usuarios`, `sesiones`, `pagos`, `debito_app`, `fact_cxc_app`, `cliente_extra`, `gestiones`, `bitacora`, `bancos`, `metodos_pago` y `productos`. Las cargas parciales las conservan; la carga completa las reinicia y vuelve a crear los catálogos base y el administrador inicial. Las vistas `v_cxc` y `v_fact_factura` unifican los saldos del Excel y las facturas capturadas en la aplicación.
 
 ## Reglas de cálculo
 
 - **Saldo de factura** = Importe − Abono (Excel) − pagos capturados en la app. Solo facturas con estatus `POR PAGAR` o `ABONADO`.
-- **Por facturar**: despachos `POR FACTURAR`. Se pueden registrar importes para un cliente y seleccionar uno o varios despachos para emitir una factura; solo los seleccionados pasan a CxC. **Cartera total** = facturada pendiente + por facturar.
+- **Por facturar**: despachos `POR FACTURAR`. Se pueden registrar importes para un cliente y seleccionar uno o varios despachos para emitir una factura; solo los seleccionados pasan a CxC. La carga Excel requiere las columnas `FECHA`, `DESPACHO`, `IMPORTE`, `ABONO`, `CLIENTE`, `PRODUCTO`, `GRUPO`, `FECHA FACTURA`, `NO. FACTURA`, `FECHA PAGO`, exactamente en ese orden; `PRODUCTO` es opcional, pero si se indica debe estar en su catálogo. **Cartera total** = facturada pendiente + por facturar.
 - **Vencimiento** = fecha de factura + días de crédito actuales del cliente; al editar los días de crédito, la fecha de vencimiento y los días vencidos se recalculan en cartera. **Días vencido** = fecha de corte − vencimiento. Rangos: No vencido, 1-15, 16-30, 31-60, 61-90, 91-120, más de 120.
 - **Riesgo**: `EXCEDIDO` (saldo total > límite), `SIN LÍMITE` (saldo con límite 0), `OK`.
 - **Saldo de débito** = abonos − consumos. Un consumo mayor al saldo se permite con aviso (queda negativo), como en el diseño original.

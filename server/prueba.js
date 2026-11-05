@@ -551,18 +551,19 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal(pendiente.status, 201, JSON.stringify(pendiente.data));
     assert.equal(pendiente.data.producto, 'Diesel');
     const edicionDespacho = await call('s', 'PUT', '/api/por-facturar/' + (2000000000 + pendiente.data.id), {
-      fecha_despacho: '2026-10-26', despacho: `DESP-SUP-${process.pid}`, producto: 'Premium', grupo: 'SUPERVISOR', monto: 95,
+      fecha_despacho: '2026-10-26', despacho: `DESP-SUP-${process.pid}`, producto: 'Magna', grupo: 'SUPERVISOR', monto: 95,
     });
     assert.equal(edicionDespacho.status, 200, JSON.stringify(edicionDespacho.data));
-    assert.equal(edicionDespacho.data.producto, 'Premium');
+    assert.equal(edicionDespacho.data.producto, 'Magna');
     const pendientesConProducto = (await call('a', 'GET', '/api/por-facturar?k=' + enc(k))).data.rows[0].items;
-    assert.equal(pendientesConProducto.find((item) => item.id === 2000000000 + pendiente.data.id).producto, 'Premium');
-    assert.equal((await L.q.get('SELECT producto FROM fact_cxc_app WHERE id=?', pendiente.data.id)).producto, 'Premium');
+    assert.equal(pendientesConProducto.find((item) => item.id === 2000000000 + pendiente.data.id).producto, 'Magna');
+    assert.equal((await L.q.get('SELECT producto FROM fact_cxc_app WHERE id=?', pendiente.data.id)).producto, 'Magna');
     const detalleConProducto = await call('a', 'GET', '/api/cliente?k=' + enc(k));
-    assert.equal(detalleConProducto.data.por_facturar.find((item) => item.id === 2000000000 + pendiente.data.id).producto, 'Premium');
+    assert.equal(detalleConProducto.data.por_facturar.find((item) => item.id === 2000000000 + pendiente.data.id).producto, 'Magna');
     assert.equal((await call('a', 'POST', '/api/por-facturar', {
       k_cliente: k, importe: 10, fecha_despacho: '2026-10-25', despacho: `DESP-INVALIDO-${process.pid}`, producto: 'Gas LP',
     })).status, 400, 'Solo se aceptan productos del catálogo');
+    assert.equal((await L.q.get('SELECT producto FROM fact_cxc_app WHERE id=?', pendiente.data.id)).producto, 'Magna');
     const pendienteSinProducto = await call('a', 'POST', '/api/por-facturar', {
       k_cliente: k, importe: 10, fecha_despacho: '2026-10-25', despacho: `DESP-OPC-${process.pid}`,
     });
@@ -632,7 +633,7 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal((await call('a', 'POST', '/api/por-facturar/carga', null, Buffer.from('no es xlsx'))).status, 400);
   });
   if (process.env.POR_FACTURAR_XLSX && fs.existsSync(process.env.POR_FACTURAR_XLSX)) {
-    await t('por facturar: importa Layout Consumo en la copia temporal', async () => {
+    await t('por facturar: importa Layout Consumo con producto en la copia temporal', async () => {
       const antes = (await call('a', 'GET', '/api/por-facturar')).data;
       const maxId = (await L.q.get('SELECT COALESCE(MAX(id),0) id FROM fact_cxc_app')).id;
       const r = await call('a', 'POST', '/api/por-facturar/carga', null, fs.readFileSync(process.env.POR_FACTURAR_XLSX));
@@ -643,8 +644,9 @@ server.listen(0, '127.0.0.1', async () => {
       assert.equal(despues.total_despachos, antes.total_despachos + 12);
       assert.ok(Math.abs(despues.total_monto - antes.total_monto - 8078.09) < 0.01);
       assert.ok((await call('a', 'GET', '/api/bitacora')).data.rows.some((row) => row.accion === 'POR_FACTURAR_CARGA' && row.usuario === 'admin'));
-      const nuevos = await L.q.all('SELECT id FROM fact_cxc_app WHERE id>?', maxId);
+      const nuevos = await L.q.all('SELECT id,producto FROM fact_cxc_app WHERE id>?', maxId);
       assert.equal(nuevos.length, 12);
+      assert.ok(nuevos.every((row) => row.producto === 'Diesel'));
       await L.q.run('DELETE FROM fact_cxc_app WHERE id>?', maxId);
     });
   }

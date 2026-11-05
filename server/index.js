@@ -213,6 +213,8 @@ async function cargaPorFacturar(req, res, user) {
         opciones.push(cliente);
         porNombre.set(clave, opciones);
       }
+      const productos = new Map((await q.all('SELECT nombre FROM productos'))
+        .map((producto) => [String(producto.nombre).normalize('NFKC').trim().toLocaleLowerCase('es-MX'), producto.nombre]));
       const despachosExistentes = new Set((await q.all('SELECT despacho FROM v_cxc WHERE despacho IS NOT NULL'))
         .map((row) => String(row.despacho).normalize('NFKC').trim().toLocaleLowerCase('es-MX')));
       const estaciones = estacionesAsignadas(user);
@@ -234,23 +236,28 @@ async function cargaPorFacturar(req, res, user) {
           errores.push(`${prefijo} el cliente "${row.cliente}" está fuera de tus estaciones asignadas.`);
           continue;
         }
+        const claveProducto = String(row.producto || '').normalize('NFKC').trim().toLocaleLowerCase('es-MX');
+        if (claveProducto && !productos.has(claveProducto)) {
+          errores.push(`${prefijo} el producto "${row.producto}" no está registrado en el catálogo.`);
+          continue;
+        }
         const claveDespacho = String(row.despacho || '').normalize('NFKC').trim().toLocaleLowerCase('es-MX');
         if (vistos.has(claveDespacho) || despachosExistentes.has(claveDespacho)) {
           errores.push(`${prefijo} el despacho "${row.despacho}" está duplicado en el archivo o ya fue registrado.`);
           continue;
         }
         vistos.add(claveDespacho);
-        preparados.push({ ...row, cliente });
+        preparados.push({ ...row, producto: productos.get(claveProducto) || null, cliente });
       }
       if (errores.length) throw new HttpError(422, errores.slice(0, 100).join('\n'));
       const ids = [];
       for (let offset = 0; offset < preparados.length; offset += 250) {
         const lote = preparados.slice(offset, offset + 250).map((row) => ({
           sql: `INSERT INTO fact_cxc_app
-            (fecha_despacho,despacho,importe,abono,k_cliente,estacion_id,estatus,grupo,fecha_factura,no_factura,fecha_pago,fecha_vencimiento,usuario_id)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            (fecha_despacho,despacho,importe,abono,k_cliente,estacion_id,estatus,producto,grupo,fecha_factura,no_factura,fecha_pago,fecha_vencimiento,usuario_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           args: [row.fecha_despacho, row.despacho, row.importe, row.abono, row.cliente.k_cliente, row.cliente.estacion_id,
-            'POR FACTURAR', row.grupo || null, row.fecha_factura || row.fecha_despacho,
+            'POR FACTURAR', row.producto, row.grupo || null, row.fecha_factura || row.fecha_despacho,
             row.no_factura || `PEND-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`, row.fecha_pago, null, user.id],
         }));
         const resultados = await q.batch(lote);
