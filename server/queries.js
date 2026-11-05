@@ -343,7 +343,7 @@ async function aplicacionesAnticipo(p) {
   if (p.k) { wh.push('a.k_cliente=?'); pr.push(p.k); }
   if (p.estado === 'APLICADA' || p.estado === 'CANCELADA') { wh.push('a.estado=?'); pr.push(p.estado); }
   if (p.q) {
-    wh.push("(c.cliente LIKE ? ESCAPE '\\' OR a.no_factura LIKE ? ESCAPE '\\' OR f.folio LIKE ? ESCAPE '\\' OR x.folio LIKE ? ESCAPE '\\')");
+    wh.push("(c.cliente LIKE ? ESCAPE '\\' OR a.no_factura LIKE ? ESCAPE '\\' OR f.folio LIKE ? ESCAPE '\\' OR COALESCE(f.serie,'') LIKE ? ESCAPE '\\')");
     pr.push(likeEsc(p.q), likeEsc(p.q), likeEsc(p.q), likeEsc(p.q));
   }
   const from = `FROM aplicaciones_factura_anticipo a

@@ -399,6 +399,8 @@
       const anticipo = opciones.anticipos.find((a) => Number(a.id) === idAnticipo);
       const factura = opciones.facturas.find((f) => f.estacion_id === Number(estacionId) && f.no_factura === noFactura);
       if (!anticipo || !factura) { $('#aplicacionErr').textContent = 'Selecciona una Factura de Anticipo y una factura existente.'; return; }
+      const cliente = clientePick.resolver();
+      if (!cliente) { $('#aplicacionErr').textContent = 'Busca y selecciona un cliente de la lista.'; return; }
       if (anticipo.moneda !== 'MXN') { $('#aplicacionErr').textContent = 'Solo se pueden aplicar anticipos en MXN a las facturas actuales.'; return; }
       if (!(monto > 0) || monto > anticipo.saldo_disponible + 0.005 || monto > factura.saldo + 0.005) {
         $('#aplicacionErr').textContent = 'El importe debe ser positivo y no exceder el saldo del anticipo ni el de la factura.'; return;
@@ -406,7 +408,7 @@
       btn.disabled = true; $('#aplicacionErr').textContent = '';
       try {
         const r = await api('/api/aplicaciones-anticipo', { method: 'POST', body: {
-          k_cliente: $('#selClienteAnticipo').value, factura_anticipo_id: idAnticipo, estacion_id: Number(estacionId),
+          k_cliente: cliente.k_cliente, factura_anticipo_id: idAnticipo, estacion_id: Number(estacionId),
           no_factura: noFactura, fecha_aplicacion: fecha, importe_aplicado: monto,
           referencia: $('#referenciaAplicacion').value, observaciones: $('#observacionesAplicacion').value,
           idempotencia: crypto.randomUUID(),

@@ -353,6 +353,9 @@ server.listen(0, '127.0.0.1', async () => {
       assert.equal(opciones.status, 200, JSON.stringify(opciones.data));
       assert.ok(opciones.data.anticipos.some((a) => a.id === anticipoId));
       assert.ok(!opciones.data.anticipos.some((a) => a.id === usdId));
+      assert.ok([factura1, factura2].every((noFactura) =>
+        opciones.data.facturas.some((factura) => factura.no_factura === noFactura)),
+      'Debe mostrar las facturas nuevas abiertas del cliente');
       assert.equal((await call('a', 'POST', '/api/aplicaciones-anticipo', {
         k_cliente: cliente.k_cliente, factura_anticipo_id: usdId, estacion_id: cliente.estacion_id,
         no_factura: factura1, fecha_aplicacion: fecha, importe_aplicado: 1, idempotencia: `anticipo-usd-${sufijo}`,
@@ -374,6 +377,9 @@ server.listen(0, '127.0.0.1', async () => {
       assert.equal(app1.status, 201, JSON.stringify(app1.data));
       aplicacion1 = app1.data.id;
       assert.equal(app1.data.saldo_disponible, 35000);
+      const busquedaAplicaciones = await call('a', 'GET', '/api/aplicaciones-anticipo?q=' + enc(factura1));
+      assert.equal(busquedaAplicaciones.status, 200, JSON.stringify(busquedaAplicaciones.data));
+      assert.ok(busquedaAplicaciones.data.rows.some((aplicacion) => aplicacion.id === aplicacion1));
       const repetida = await call('a', 'POST', '/api/aplicaciones-anticipo', body1);
       assert.equal(repetida.status, 200, JSON.stringify(repetida.data));
       assert.equal(repetida.data.id, aplicacion1);
