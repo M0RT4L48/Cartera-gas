@@ -338,6 +338,7 @@ async function api(req, res, url) {
     }
     if (p === '/api/bancos') return send(res, 200, { rows: await q.all('SELECT id,nombre FROM bancos ORDER BY nombre') });
     if (p === '/api/metodos-pago') return send(res, 200, { rows: await q.all('SELECT id,nombre,requiere_banco FROM metodos_pago ORDER BY nombre') });
+    if (p === '/api/productos') return send(res, 200, { rows: await q.all('SELECT id,nombre FROM productos ORDER BY nombre') });
     if (p === '/api/dashboard') return send(res, 200, await Q.dashboard(await params(query, user)));
     if (p === '/api/alertas') return send(res, 200, await Q.alertas(await params(query, user)));
     if (p === '/api/clientes-lista') {
@@ -532,6 +533,41 @@ async function api(req, res, url) {
     await L.bitacora(user, 'METODO_PAGO_BAJA', `${metodo.nombre} (#${id})`, ip(req));
     return send(res, 200, { ok: true });
   }
+  if (m === 'POST' && p === '/api/productos') {
+    exigir(user, 'usuarios');
+    const b = await readBody(req), nombre = txt(b.nombre, 80);
+    if (!nombre) throw new HttpError(400, 'El nombre del producto es obligatorio');
+    if (await q.get('SELECT 1 FROM productos WHERE nombre=? COLLATE NOCASE', nombre)) throw new HttpError(409, 'Ese producto ya existe');
+    const result = await q.run('INSERT INTO productos(nombre) VALUES (?)', nombre);
+    await L.bitacora(user, 'PRODUCTO_ALTA', nombre, ip(req));
+    return send(res, 201, { ok: true, id: Number(result.lastInsertRowid), nombre });
+  }
+  if (m === 'PUT' && (mt = p.match(/^\/api\/productos\/(\d+)$/))) {
+    exigir(user, 'usuarios');
+    const id = Number(mt[1]), b = await readBody(req), nombre = txt(b.nombre, 80);
+    const producto = await q.get('SELECT id,nombre FROM productos WHERE id=?', id);
+    if (!producto) throw new HttpError(404, 'Producto no encontrado');
+    if (!nombre) throw new HttpError(400, 'El nombre del producto es obligatorio');
+    if (await q.get('SELECT 1 FROM productos WHERE nombre=? COLLATE NOCASE AND id<>?', nombre, id)) throw new HttpError(409, 'Ese producto ya existe');
+    await tx(async () => {
+      await q.run('UPDATE fact_cxc SET producto=? WHERE producto=?', nombre, producto.nombre);
+      await q.run('UPDATE fact_cxc_app SET producto=? WHERE producto=?', nombre, producto.nombre);
+      await q.run('UPDATE productos SET nombre=? WHERE id=?', nombre, id);
+    });
+    await L.bitacora(user, 'PRODUCTO_EDITA', `#${id} ${producto.nombre}->${nombre}`, ip(req));
+    return send(res, 200, { ok: true, id, nombre });
+  }
+  if (m === 'DELETE' && (mt = p.match(/^\/api\/productos\/(\d+)$/))) {
+    exigir(user, 'usuarios');
+    const id = Number(mt[1]), producto = await q.get('SELECT id,nombre FROM productos WHERE id=?', id);
+    if (!producto) throw new HttpError(404, 'Producto no encontrado');
+    if (await q.get('SELECT 1 FROM fact_cxc WHERE producto=? UNION ALL SELECT 1 FROM fact_cxc_app WHERE producto=? LIMIT 1', producto.nombre, producto.nombre)) {
+      throw new HttpError(409, 'No se puede eliminar un producto asignado a despachos');
+    }
+    await q.run('DELETE FROM productos WHERE id=?', id);
+    await L.bitacora(user, 'PRODUCTO_BAJA', `${producto.nombre} (#${id})`, ip(req));
+    return send(res, 200, { ok: true });
+  }
 
   if (m === 'PUT' && (mt = p.match(/^\/api\/por-facturar\/(\d+)$/))) {
     if (!can(user, 'facturas') && !can(user, 'editar_despacho')) throw new HttpError(403, 'No tienes permiso para esta acción');
@@ -549,12 +585,17 @@ async function api(req, res, url) {
       throw new HttpError(400, 'La fecha de despacho es inválida o futura');
     }
     const despacho = txt(body.despacho, 80) || null;
-    const producto = txt(body.producto, 120) || null;
+    let producto = txt(body.producto, 120) || null;
     const grupo = txt(body.grupo, 60) || null;
     const montoPendiente = redondea(L.num(body.monto, -1));
     const importe = redondea(montoPendiente + Number(despachoActual.abono || 0));
     if (!(montoPendiente > 0) || importe > 1e9) {
       throw new HttpError(400, 'El pendiente debe ser mayor a cero y el importe total no exceder $1,000,000,000');
+    }
+    if (producto) {
+      const productoCatalogo = await q.get('SELECT nombre FROM productos WHERE nombre=? COLLATE NOCASE', producto);
+      if (!productoCatalogo) throw new HttpError(400, 'Selecciona un producto válido del catálogo');
+      producto = productoCatalogo.nombre;
     }
     const normalizaDespacho = (valor) => String(valor || '').normalize('NFKC').trim().toLocaleLowerCase('es-MX');
     if (despacho && normalizaDespacho(despacho) !== normalizaDespacho(despachoActual.despacho)) {
@@ -589,7 +630,12 @@ async function api(req, res, url) {
     if (!L.esFecha(fechaDespacho) || fechaDespacho > L.hoyISO()) throw new HttpError(400, 'La fecha de despacho es inválida o futura');
     if (!(importe > 0) || importe > 1e9) throw new HttpError(400, 'El importe debe ser mayor a cero y no exceder $1,000,000,000');
     const despacho = txt(b.despacho, 80) || 'PENDIENTE';
-    const producto = txt(b.producto, 120) || null;
+    let producto = txt(b.producto, 120) || null;
+    if (producto) {
+      const productoCatalogo = await q.get('SELECT nombre FROM productos WHERE nombre=? COLLATE NOCASE', producto);
+      if (!productoCatalogo) throw new HttpError(400, 'Selecciona un producto válido del catálogo');
+      producto = productoCatalogo.nombre;
+    }
     const noFactura = `POR-FACTURAR-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const r = await q.run(`INSERT INTO fact_cxc_app(fecha_despacho,despacho,producto,importe,abono,k_cliente,estacion_id,estatus,grupo,fecha_factura,no_factura,fecha_vencimiento,usuario_id)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, fechaDespacho, despacho, producto, importe, 0, cliente.k_cliente, cliente.estacion_id, 'POR FACTURAR',

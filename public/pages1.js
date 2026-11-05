@@ -352,7 +352,7 @@
     };
     const estOpts = S.cat.estaciones;
     setView(html`
-      <div class="h"><h2>${soloClientes ? 'Catálogo de clientes' : 'Gestión de catálogos'}</h2><p>${soloClientes ? 'Administra clientes, crédito y consulta sus saldos unificados de CxC y débito.' : 'Administra bancos y métodos de pago compartidos por los módulos financieros.'}</p></div>
+      <div class="h"><h2>${soloClientes ? 'Catálogo de clientes' : 'Gestión de catálogos'}</h2><p>${soloClientes ? 'Administra clientes, crédito y consulta sus saldos unificados de CxC y débito.' : 'Administra bancos, métodos de pago y productos disponibles en los despachos.'}</p></div>
       ${!soloClientes ? html`
       <div class="card" style="margin-bottom:18px"><h3>Catálogo de bancos</h3>
         ${can('usuarios') ? html`<form id="formBanco" class="inline-form" style="margin-bottom:12px">
@@ -370,6 +370,15 @@
           <button class="btn dark" type="submit">+ Agregar método</button><div class="err" id="metodoPagoErr" style="flex-basis:100%"></div></form>` : ''}
         <div class="tablewrap nomax"><table><thead><tr><th>Método de pago</th><th>Banco requerido en pagos CxC</th><th></th></tr></thead><tbody>
           ${S.cat.metodos_pago.length ? S.cat.metodos_pago.map((m) => html`<tr><td>${m.nombre}</td><td>${m.requiere_banco ? 'Sí' : 'No'}</td><td>${can('usuarios') ? html`<button class="btn small" data-act="editMetodoPago" data-id="${m.id}" data-nombre="${m.nombre}" data-requiere="${m.requiere_banco ? '1' : '0'}">Editar</button> <button class="btn small danger" data-act="deleteMetodoPago" data-id="${m.id}" data-nombre="${m.nombre}">Eliminar</button>` : ''}</td></tr>`) : html`<tr><td colspan="3" class="empty">No hay métodos de pago registrados.</td></tr>`}
+        </tbody></table></div>
+      </div>
+      <div class="card" style="margin-bottom:18px"><h3>Catálogo de productos</h3>
+        <p class="mut">Los productos aparecen como opciones al registrar o editar despachos por facturar.</p>
+        ${can('usuarios') ? html`<form id="formProducto" class="inline-form" style="margin-bottom:12px">
+          <label style="flex:1;min-width:220px">Nombre del producto<input name="nombre" maxlength="80" required></label>
+          <button class="btn dark" type="submit">+ Agregar producto</button><div class="err" id="productoErr" style="flex-basis:100%"></div></form>` : ''}
+        <div class="tablewrap nomax"><table><thead><tr><th>Producto</th><th></th></tr></thead><tbody>
+          ${S.cat.productos.length ? S.cat.productos.map((p) => html`<tr><td>${p.nombre}</td><td>${can('usuarios') ? html`<button class="btn small" data-act="editProducto" data-id="${p.id}" data-nombre="${p.nombre}">Editar</button> <button class="btn small danger" data-act="deleteProducto" data-id="${p.id}" data-nombre="${p.nombre}">Eliminar</button>` : ''}</td></tr>`) : html`<tr><td colspan="2" class="empty">No hay productos registrados.</td></tr>`}
         </tbody></table></div>
       </div>
       ` : ''}
@@ -423,6 +432,15 @@
         await api('/api/metodos-pago', { method: 'POST', body: Object.fromEntries(new FormData(fm)) });
         toast('Método de pago agregado'); await CG.loadCatalogos(); CG.route(true);
       } catch (er) { $('#metodoPagoErr').textContent = er.message; }
+    };
+    const fp = $('#formProducto');
+    if (fp) fp.onsubmit = async (e) => {
+      e.preventDefault();
+      $('#productoErr').textContent = '';
+      try {
+        await api('/api/productos', { method: 'POST', body: Object.fromEntries(new FormData(fp)) });
+        toast('Producto agregado'); await CG.loadCatalogos(); CG.route(true);
+      } catch (er) { $('#productoErr').textContent = er.message; }
     };
     if (soloClientes) load();
   };
@@ -586,6 +604,26 @@
     try {
       await api('/api/metodos-pago/' + el.dataset.id, { method: 'DELETE' });
       toast('Método de pago eliminado'); await CG.loadCatalogos(); CG.route(true);
+    } catch (e) { toast(e.message, 'bad'); }
+  };
+  CG.acts.editProducto = (el) => {
+    modal(html`<h2>Editar producto</h2><form id="formEditarProducto" class="form">
+      <label class="full">Nombre<input name="nombre" maxlength="80" value="${el.dataset.nombre}" required></label>
+      <div class="full err" id="editarProductoErr"></div><div class="full actions">
+        <button type="button" class="btn" data-act="cerrar">Cancelar</button><button class="btn accent">Guardar</button></div></form>`);
+    $('#formEditarProducto').onsubmit = async (e) => {
+      e.preventDefault();
+      try {
+        await api('/api/productos/' + el.dataset.id, { method: 'PUT', body: Object.fromEntries(new FormData(e.target)) });
+        toast('Producto actualizado'); closeModal(); await CG.loadCatalogos(); CG.route(true);
+      } catch (er) { $('#editarProductoErr').textContent = er.message; }
+    };
+  };
+  CG.acts.deleteProducto = async (el) => {
+    if (!confirm(`¿Eliminar el producto ${el.dataset.nombre}?`)) return;
+    try {
+      await api('/api/productos/' + el.dataset.id, { method: 'DELETE' });
+      toast('Producto eliminado'); await CG.loadCatalogos(); CG.route(true);
     } catch (e) { toast(e.message, 'bad'); }
   };
 })();

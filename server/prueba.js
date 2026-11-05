@@ -64,6 +64,30 @@ server.listen(0, '127.0.0.1', async () => {
     metodoPagoPrueba = editar.data.nombre;
     assert.ok((await call('a', 'GET', '/api/metodos-pago')).data.rows.some((m) => m.nombre === metodoPagoPrueba && m.requiere_banco === 1));
   });
+  await t('catálogo de productos: opciones iniciales y CRUD admin', async () => {
+    const r = await call('a', 'GET', '/api/catalogos');
+    assert.deepEqual(r.data.productos.map((producto) => producto.nombre).sort(), ['Diesel', 'Magna', 'Premium']);
+    const alta = await call('a', 'POST', '/api/productos', { nombre: 'Producto de Prueba' });
+    assert.equal(alta.status, 201, JSON.stringify(alta.data));
+    assert.equal((await call('a', 'POST', '/api/productos', { nombre: 'producto de prueba' })).status, 409);
+    const cliente = await L.q.get('SELECT k_cliente,estacion_id FROM dim_cliente LIMIT 1');
+    const despacho = await L.q.run(`INSERT INTO fact_cxc_app
+      (fecha_despacho,despacho,producto,importe,abono,k_cliente,estacion_id,estatus,grupo,fecha_factura,no_factura)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    '2026-10-25', `DESP-PRODUCTO-${process.pid}`, alta.data.nombre, 1, 0, cliente.k_cliente, cliente.estacion_id,
+    'POR FACTURAR', 'PENDIENTE', '2026-10-25', `FACT-PRODUCTO-${process.pid}`);
+    try {
+      assert.equal((await call('a', 'DELETE', '/api/productos/' + alta.data.id)).status, 409, 'No se elimina producto asignado');
+      const editar = await call('a', 'PUT', '/api/productos/' + alta.data.id, { nombre: 'Producto Editado' });
+      assert.equal(editar.status, 200, JSON.stringify(editar.data));
+      assert.equal((await L.q.get('SELECT producto FROM fact_cxc_app WHERE id=?', despacho.lastInsertRowid)).producto, 'Producto Editado');
+      assert.ok((await call('a', 'GET', '/api/productos')).data.rows.some((producto) => producto.nombre === 'Producto Editado'));
+      assert.equal((await call('a', 'DELETE', '/api/productos/' + alta.data.id)).status, 409, 'El producto renombrado sigue asignado');
+    } finally {
+      await L.q.run('DELETE FROM fact_cxc_app WHERE id=?', despacho.lastInsertRowid);
+    }
+    assert.equal((await call('a', 'DELETE', '/api/productos/' + alta.data.id)).status, 200);
+  });
 
   let dash;
   await t('KPIs: cifras del modelo', async () => {
@@ -522,20 +546,23 @@ server.listen(0, '127.0.0.1', async () => {
     }
     assert.equal((await call('s', 'GET', '/api/cliente?k=' + enc(clienteSegundaEstacion.data.k_cliente))).status, 200);
     const pendiente = await call('a', 'POST', '/api/por-facturar', {
-      k_cliente: k, importe: 80, fecha_despacho: '2026-10-25', despacho: `DESP-SUP-${process.pid}`, producto: 'Gas LP',
+      k_cliente: k, importe: 80, fecha_despacho: '2026-10-25', despacho: `DESP-SUP-${process.pid}`, producto: 'Diesel',
     });
     assert.equal(pendiente.status, 201, JSON.stringify(pendiente.data));
-    assert.equal(pendiente.data.producto, 'Gas LP');
+    assert.equal(pendiente.data.producto, 'Diesel');
     const edicionDespacho = await call('s', 'PUT', '/api/por-facturar/' + (2000000000 + pendiente.data.id), {
-      fecha_despacho: '2026-10-26', despacho: `DESP-SUP-${process.pid}`, producto: 'Gas LP Editado', grupo: 'SUPERVISOR', monto: 95,
+      fecha_despacho: '2026-10-26', despacho: `DESP-SUP-${process.pid}`, producto: 'Premium', grupo: 'SUPERVISOR', monto: 95,
     });
     assert.equal(edicionDespacho.status, 200, JSON.stringify(edicionDespacho.data));
-    assert.equal(edicionDespacho.data.producto, 'Gas LP Editado');
+    assert.equal(edicionDespacho.data.producto, 'Premium');
     const pendientesConProducto = (await call('a', 'GET', '/api/por-facturar?k=' + enc(k))).data.rows[0].items;
-    assert.equal(pendientesConProducto.find((item) => item.id === 2000000000 + pendiente.data.id).producto, 'Gas LP Editado');
-    assert.equal((await L.q.get('SELECT producto FROM fact_cxc_app WHERE id=?', pendiente.data.id)).producto, 'Gas LP Editado');
+    assert.equal(pendientesConProducto.find((item) => item.id === 2000000000 + pendiente.data.id).producto, 'Premium');
+    assert.equal((await L.q.get('SELECT producto FROM fact_cxc_app WHERE id=?', pendiente.data.id)).producto, 'Premium');
     const detalleConProducto = await call('a', 'GET', '/api/cliente?k=' + enc(k));
-    assert.equal(detalleConProducto.data.por_facturar.find((item) => item.id === 2000000000 + pendiente.data.id).producto, 'Gas LP Editado');
+    assert.equal(detalleConProducto.data.por_facturar.find((item) => item.id === 2000000000 + pendiente.data.id).producto, 'Premium');
+    assert.equal((await call('a', 'POST', '/api/por-facturar', {
+      k_cliente: k, importe: 10, fecha_despacho: '2026-10-25', despacho: `DESP-INVALIDO-${process.pid}`, producto: 'Gas LP',
+    })).status, 400, 'Solo se aceptan productos del catálogo');
     const pendienteSinProducto = await call('a', 'POST', '/api/por-facturar', {
       k_cliente: k, importe: 10, fecha_despacho: '2026-10-25', despacho: `DESP-OPC-${process.pid}`,
     });
@@ -736,7 +763,7 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal(listaPendientes.data.rows[0].despachos, 2);
     assert.equal(listaPendientes.data.rows[0].items.length, 2);
     const despachoEditar = listaPendientes.data.rows[0].items.find((item) => item.origen === 'app' && item.despacho === 'DESPACHO-1');
-    const cambiosDespacho = { fecha_despacho: '2026-10-24', despacho: 'DESPACHO-EDITADO', producto: 'Gas LP', grupo: 'GRUPO-EDITADO', monto: 95.25 };
+    const cambiosDespacho = { fecha_despacho: '2026-10-24', despacho: 'DESPACHO-EDITADO', producto: 'Diesel', grupo: 'GRUPO-EDITADO', monto: 95.25 };
     assert.equal((await call('l', 'PUT', '/api/por-facturar/' + despachoEditar.id, cambiosDespacho)).status, 403);
     assert.equal((await call('a', 'PUT', '/api/por-facturar/' + despachoEditar.id, {
       ...cambiosDespacho, despacho: 'DESPACHO-2',
@@ -782,7 +809,7 @@ server.listen(0, '127.0.0.1', async () => {
       k: altaCliente.data.k_cliente, est: '1', no: 'FACTURA-SELECCION',
     }));
     assert.equal(detalleFacturaProducto.status, 200, JSON.stringify(detalleFacturaProducto.data));
-    assert.equal(detalleFacturaProducto.data.despachos[0].producto, 'Gas LP');
+    assert.equal(detalleFacturaProducto.data.despachos[0].producto, 'Diesel');
     const restante = await call('a', 'GET', '/api/por-facturar?k=' + enc(altaCliente.data.k_cliente));
     assert.equal(restante.data.rows[0].despachos, 1);
     assert.equal(restante.data.rows[0].monto, 120);

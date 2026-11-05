@@ -154,6 +154,12 @@ INSERT OR IGNORE INTO metodos_pago(nombre, requiere_banco) VALUES
   ('Compensación', 0),
   ('Otro', 0);
 
+CREATE TABLE IF NOT EXISTS productos (
+  id     INTEGER PRIMARY KEY AUTOINCREMENT,
+  nombre TEXT NOT NULL UNIQUE COLLATE NOCASE
+);
+INSERT OR IGNORE INTO productos(nombre) VALUES ('Diesel'), ('Premium'), ('Magna');
+
 CREATE TABLE IF NOT EXISTS debito_app (        -- movimientos de debito capturados en la app
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   fecha       TEXT NOT NULL,

@@ -91,6 +91,7 @@ async function catalogos() {
     estaciones: await q.all('SELECT id,nombre FROM dim_estacion ORDER BY nombre'),
     bancos: await q.all('SELECT id,nombre FROM bancos ORDER BY nombre'),
     metodos_pago: await q.all('SELECT id,nombre,requiere_banco FROM metodos_pago ORDER BY nombre'),
+    productos: await q.all('SELECT id,nombre FROM productos ORDER BY nombre'),
     fecha_corte: await corteDefault(),
     fuente: (await q.get("SELECT valor FROM meta WHERE clave='fuente'") || {}).valor || null,
     importado_en: (await q.get("SELECT valor FROM meta WHERE clave='importado_en'") || {}).valor || null,

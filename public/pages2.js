@@ -475,7 +475,7 @@
           <label>Monto ($)<input name="importe" type="number" min="0.01" step="0.01" required></label>
           <label>Fecha de despacho<input name="fecha_despacho" type="date" max="${hoyLocal()}" value="${hoyLocal()}" required></label>
           <label>Despacho<input name="despacho" maxlength="80" placeholder="Ej. Entrega 12/10"></label>
-          <label>Producto (opcional)<input name="producto" maxlength="120" placeholder="Ej. Gas LP"></label>
+          <label>Producto (opcional)<select name="producto">${opt('', 'Sin producto')}${S.cat.productos.map((p) => opt(p.nombre, p.nombre))}</select></label>
         </div>
         <div class="err" id="porFacturarErr" style="margin-top:8px"></div>
         <button class="btn dark" type="submit" style="margin-top:12px">Guardar por facturar</button>
@@ -591,7 +591,9 @@
       if (boton.dataset.despachoAction === 'editar') {
         inputCelda(fila.cells[1], 'date', despacho.fecha_despacho, { max: hoyLocal(), required: true });
         inputCelda(fila.cells[2], 'text', despacho.despacho, { maxLength: 80 });
-        inputCelda(fila.cells[3], 'text', despacho.producto, { maxLength: 120 });
+        const productoSelect = document.createElement('select');
+        productoSelect.innerHTML = html`${opt('', 'Sin producto')}${S.cat.productos.map((p) => opt(p.nombre, p.nombre, despacho.producto))}`.s;
+        fila.cells[3].replaceChildren(productoSelect);
         inputCelda(fila.cells[4], 'text', despacho.grupo, { maxLength: 60 });
         inputCelda(fila.cells[5], 'number', despacho.monto, { min: 0.01, max: 1e9, step: 0.01, required: true });
         const acciones = document.createElement('div');
