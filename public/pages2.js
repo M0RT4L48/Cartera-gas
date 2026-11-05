@@ -614,7 +614,7 @@
         renderDespacho(fila, despacho);
         return;
       }
-      const [fecha, nombre, producto, grupo, monto] = [...fila.cells].slice(1, 6).map((cell) => cell.querySelector('input').value);
+      const [fecha, nombre, producto, grupo, monto] = [...fila.cells].slice(1, 6).map((cell) => cell.querySelector('input, select').value);
       if (!fecha || !monto || Number(monto) <= 0) { toast('Completa una fecha válida y un pendiente mayor a cero.', 'bad'); return; }
       boton.disabled = true;
       try {
