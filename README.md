@@ -69,7 +69,7 @@ docker compose down
 | **Por Facturar** | Registra importes pendientes por cliente y muestra sus despachos; permite editar fecha, despacho, grupo e importe pendiente antes de facturar (con auditoría en bitácora); al emitir una factura se seleccionan los despachos que se transferirán a CxC |
 | **Control de Débito** | Registra abonos (+) con método de pago y banco, y consumos (−) de saldo prepagado; consulta saldos a favor e historial filtrable por cliente, operación y fechas, con paginación; permite anular movimientos capturados en la app |
 | **Cobranza / Alertas** | Gestiones y promesas de pago; alertas de límite excedido, >60 días, próximas a vencer, sin límite, sin vencimiento |
-| **Clientes** | Catálogo de clientes: alta, edición, crédito, contacto, saldos, filtros y exportación CSV; ficha individual con estado de cuenta CSV filtrable por fechas |
+| **Clientes** | Catálogo de clientes: alta, edición, crédito, contacto, modo de carga, saldos, filtros y exportación CSV; ficha individual con estado de cuenta CSV filtrable por fechas |
 | **Catálogos** | Administración de bancos y métodos de pago por el administrador general |
 | **Usuarios y Roles** | Alta/edición de usuarios, rol y estación asignada; bitácora |
 | **Carga de Datos** | Sube `Gas_App.xlsx` desde el navegador (respaldo automático previo) |

@@ -389,7 +389,7 @@ async function api(req, res, url) {
         exigir(user, 'export');
         const r = await Q.clientes({ ...pr, todo: true });
         await L.bitacora(user, 'EXPORT', `clientes ${r.total}`, ip(req));
-        return csv(res, 'clientes.csv', [['estacion', 'Estación'], ['cliente', 'Cliente'], ['no_cliente', 'No. cliente'], ['rfc', 'RFC'], ['email', 'Correo electrónico'], ['telefono', 'Teléfono'], ['limite', 'Límite de crédito'],
+        return csv(res, 'clientes.csv', [['estacion', 'Estación'], ['cliente', 'Cliente'], ['no_cliente', 'No. cliente'], ['rfc', 'RFC'], ['email', 'Correo electrónico'], ['telefono', 'Teléfono'], ['modo_carga', 'Modo de carga'], ['limite', 'Límite de crédito'],
           ['dias_credito', 'Días de crédito'], ['saldo_fact', 'Saldo facturado'], ['vencido', 'Vencido'], ['por_facturar', 'Por facturar'],
           ['saldo_total', 'Saldo total'], ['disponible', 'Disponible'], ['max_dias', 'Máx. días vencido'], ['saldo_favor', 'Saldo a favor (débito)'], ['riesgo', 'Riesgo']], r.rows);
       }
@@ -1045,6 +1045,9 @@ async function api(req, res, url) {
     const email = txt(b.email, 254).toLowerCase();
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'Correo electrónico inválido');
     const telefono = txt(b.telefono, 40);
+    const modosCarga = ['Vales debito', 'Vales Credito', 'Flotilla debito', 'Flotilla Credito'];
+    const modoCarga = txt(b.modo_carga, 40) || null;
+    if (modoCarga && !modosCarga.includes(modoCarga)) throw new HttpError(400, 'Modo de carga inválido');
     const limite = L.num(b.limite, 0), dias = Math.trunc(L.num(b.dias, 0));
     if (limite < 0 || limite > 1e9) throw new HttpError(400, 'Límite inválido');
     if (dias < 0 || dias > 365) throw new HttpError(400, 'Días de crédito inválidos (0-365)');
@@ -1053,8 +1056,8 @@ async function api(req, res, url) {
     const nc = txt(b.no_cliente, 30) || null;
     await tx(async () => {
       await q.run('INSERT INTO dim_cliente(k_cliente,cliente,estacion_id,no_cliente) VALUES (?,?,?,?)', k, nombre, est.id, nc);
-      await q.run('INSERT INTO cliente_extra(k_cliente,rfc,creado_app,cliente,estacion_id,no_cliente,email,telefono) VALUES (?,?,1,?,?,?,?,?)',
-        k, rfc || null, nombre, est.id, nc, email || null, telefono || null);
+      await q.run('INSERT INTO cliente_extra(k_cliente,rfc,creado_app,cliente,estacion_id,no_cliente,email,telefono,modo_carga) VALUES (?,?,1,?,?,?,?,?,?)',
+        k, rfc || null, nombre, est.id, nc, email || null, telefono || null, modoCarga);
       await q.run("INSERT INTO credito(k_cliente,limite,dias,origen,actualizado_por,actualizado) VALUES (?,?,?,'app',?,datetime('now'))", k, limite, dias, user.usuario);
     });
     await L.bitacora(user, 'CLIENTE_ALTA', `${k} límite ${limite} días ${dias}`, ip(req));
@@ -1082,6 +1085,11 @@ async function api(req, res, url) {
     const email = txt(b.email, 254).toLowerCase();
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'Correo electrónico inválido');
     const telefono = txt(b.telefono, 40);
+    const modosCarga = ['Vales debito', 'Vales Credito', 'Flotilla debito', 'Flotilla Credito'];
+    const modoCarga = b.modo_carga === undefined
+      ? (await q.get('SELECT modo_carga FROM cliente_extra WHERE k_cliente=?', k) || {}).modo_carga || null
+      : txt(b.modo_carga, 40) || null;
+    if (modoCarga && !modosCarga.includes(modoCarga)) throw new HttpError(400, 'Modo de carga inválido');
     const limite = L.num(b.limite, -1), dias = Math.trunc(L.num(b.dias, -1));
     if (limite < 0 || limite > 1e9) throw new HttpError(400, 'Límite inválido');
     if (dias < 0 || dias > 365) throw new HttpError(400, 'Días de crédito inválidos (0-365)');
@@ -1090,11 +1098,11 @@ async function api(req, res, url) {
       for (const table of ['fact_cxc', 'fact_factura', 'fact_debito', 'pagos', 'debito_app', 'fact_cxc_app']) {
         await q.run(`UPDATE ${table} SET estacion_id=? WHERE k_cliente=?`, estacionId, k);
       }
-      await q.run(`INSERT INTO cliente_extra(k_cliente,rfc,cliente,estacion_id,no_cliente,email,telefono,editado_app)
-        VALUES (?,?,?,?,?,?,?,1)
+      await q.run(`INSERT INTO cliente_extra(k_cliente,rfc,cliente,estacion_id,no_cliente,email,telefono,modo_carga,editado_app)
+        VALUES (?,?,?,?,?,?,?,?,1)
         ON CONFLICT(k_cliente) DO UPDATE SET rfc=excluded.rfc,cliente=excluded.cliente,estacion_id=excluded.estacion_id,
-          no_cliente=excluded.no_cliente,email=excluded.email,telefono=excluded.telefono,editado_app=1`,
-      k, rfc || null, nombre, estacionId, noCliente, email || null, telefono || null);
+          no_cliente=excluded.no_cliente,email=excluded.email,telefono=excluded.telefono,modo_carga=excluded.modo_carga,editado_app=1`,
+      k, rfc || null, nombre, estacionId, noCliente, email || null, telefono || null, modoCarga);
       await q.run(`INSERT INTO credito(k_cliente,limite,dias,origen,actualizado_por,actualizado)
         VALUES (?,?,?,'app',?,datetime('now'))
         ON CONFLICT(k_cliente) DO UPDATE SET limite=excluded.limite,dias=excluded.dias,origen='app',

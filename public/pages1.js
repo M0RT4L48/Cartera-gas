@@ -347,6 +347,7 @@
 
   // =============== CATÁLOGOS (clientes) ===============
   const cliDefault = () => ({ q: '', filtro: '', sort: 'cliente', dir: 'asc', page: 1 });
+  const modosCargaCliente = ['Vales debito', 'Vales Credito', 'Flotilla debito', 'Flotilla Credito'];
   CG.routes.catalogos = async ([vista] = []) => {
     const soloClientes = vista === 'clientes';
     const st = { ...cliDefault(), ...store.get('cli', {}) };
@@ -356,17 +357,17 @@
       try {
         const r = await api('/api/clientes?' + qs(gp({ ...st })));
         $('#tbl').innerHTML = html`
-          <div class="tablewrap"><table><thead><tr>${thSort('No. cliente', 'no', st)}${thSort('Nombre', 'cliente', st)}<th>Estación</th><th>Correo electrónico</th><th>Teléfono</th>${thSort('Límite crédito', 'limite', st, 'n')}<th class="n">Días crédito</th>
+          <div class="tablewrap"><table><thead><tr>${thSort('No. cliente', 'no', st)}${thSort('Nombre', 'cliente', st)}<th>Estación</th><th>Correo electrónico</th><th>Teléfono</th><th>Modo de carga</th>${thSort('Límite crédito', 'limite', st, 'n')}<th class="n">Días crédito</th>
             ${thSort('Saldo CxC', 'saldo', st, 'n')}${thSort('Vencido', 'vencido', st, 'n')}${thSort('Uso del límite', 'uso', st)}${thSort('Saldo prepago (Débito)', 'favor', st, 'n')}<th>Riesgo</th><th></th></tr></thead>
             <tbody>${r.rows.length ? r.rows.map((c) => html`<tr class="click" data-go="#/cliente/${encodeURIComponent(c.k_cliente)}"><td class="mut">${c.no_cliente || 'N/A'}</td>
               <td class="wrap"><b>${c.cliente}</b>${c.rfc ? html`<br><small class="mut">RFC: ${c.rfc}</small>` : ''}</td><td>${corto(c.estacion)}</td>
-              <td class="wrap">${c.email || ''}</td><td>${c.telefono || ''}</td>
+              <td class="wrap">${c.email || ''}</td><td>${c.telefono || ''}</td><td>${c.modo_carga || ''}</td>
               <td class="n">${money(c.limite)}</td><td class="n">${c.dias_credito}</td><td class="n strong">${money(c.saldo_total)}</td><td class="n ${c.vencido > 0 ? 'neg' : ''}">${money(c.vencido)}</td>
               <td>${useBar(c.uso)}</td><td class="n ${c.saldo_favor > 0 ? 'pos strong' : c.saldo_favor < 0 ? 'neg' : ''}">${c.saldo_favor ? money(c.saldo_favor) : ''}</td>
               <td>${c.saldo_total > 0.005 || c.limite > 0 ? badge(c.riesgo) : ''}</td>
-              <td>${can('clientes') ? html`<button class="btn small" data-act="editCliente" data-k="${c.k_cliente}" data-est="${c.estacion_id}" data-lim="${c.limite}" data-dias="${c.dias_credito}" data-rfc="${c.rfc || ''}" data-email="${c.email || ''}" data-telefono="${c.telefono || ''}" data-no="${c.no_cliente || ''}" data-nombre="${c.cliente}">Editar</button>` : ''}</td></tr>`)
-              : html`<tr><td colspan="13" class="empty">Sin clientes para este filtro.</td></tr>`}</tbody>
-            <tfoot><tr><td colspan="7">Totales de la selección</td><td class="n">${money(r.suma_saldo)}</td><td class="n">${money(r.suma_vencido)}</td><td colspan="4"></td></tr></tfoot></table></div>
+              <td>${can('clientes') ? html`<button class="btn small" data-act="editCliente" data-k="${c.k_cliente}" data-est="${c.estacion_id}" data-lim="${c.limite}" data-dias="${c.dias_credito}" data-rfc="${c.rfc || ''}" data-email="${c.email || ''}" data-telefono="${c.telefono || ''}" data-modo-carga="${c.modo_carga || ''}" data-no="${c.no_cliente || ''}" data-nombre="${c.cliente}">Editar</button>` : ''}</td></tr>`)
+              : html`<tr><td colspan="14" class="empty">Sin clientes para este filtro.</td></tr>`}</tbody>
+            <tfoot><tr><td colspan="8">Totales de la selección</td><td class="n">${money(r.suma_saldo)}</td><td class="n">${money(r.suma_vencido)}</td><td colspan="4"></td></tr></tfoot></table></div>
           ${pager(st, r.total, r.size)}`.s;
       } catch (e) { $('#tbl').innerHTML = html`<div class="note">${e.message}</div>`.s; }
     };
@@ -412,6 +413,7 @@
         <label style="width:110px">Días crédito<input name="dias" type="number" min="0" max="365" step="1" placeholder="15"></label>
         <label style="width:190px">Correo electrónico<input name="email" type="email" maxlength="254"></label>
         <label style="width:150px">Teléfono<input name="telefono" type="tel" maxlength="40"></label>
+        <label style="width:190px">Modo de carga<select name="modo_carga">${opt('', 'Selecciona un modo')}${modosCargaCliente.map((modo) => opt(modo, modo))}</select></label>
         <button class="btn dark" type="submit">+ Agregar cliente</button>
         <div class="err" id="cliErr" style="flex-basis:100%"></div></form>` : ''}
       <div class="bar" id="filtros">
@@ -574,6 +576,7 @@
       <label>Días de crédito<input name="dias" type="number" min="0" max="365" step="1" value="${el.dataset.dias}" required></label>
       <label>Correo electrónico<input name="email" type="email" maxlength="254" value="${el.dataset.email}"></label>
       <label>Teléfono<input name="telefono" type="tel" maxlength="40" value="${el.dataset.telefono}"></label>
+      <label>Modo de carga<select name="modo_carga">${opt('', 'Sin especificar', el.dataset.modoCarga)}${modosCargaCliente.map((modo) => opt(modo, modo, el.dataset.modoCarga))}</select></label>
       <div class="full note info">El cambio de estación traslada los registros del cliente. El identificador interno permanece estable y los cambios se conservan al importar Excel.</div>
       <div class="full err" id="credErr"></div>
       <div class="full actions"><button type="button" class="btn" data-act="cerrar">Cancelar</button><button class="btn accent">Guardar</button></div></form>`);

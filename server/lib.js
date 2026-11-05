@@ -41,6 +41,7 @@ const MIGRATIONS = [
   ['debito_app', 'banco', 'TEXT'],
   ['cliente_extra', 'email', 'TEXT'],
   ['cliente_extra', 'telefono', 'TEXT'],
+  ['cliente_extra', 'modo_carga', 'TEXT'],
   ['cliente_extra', 'editado_app', 'INTEGER NOT NULL DEFAULT 0'],
   ['pagos', 'desde_prepago', 'INTEGER NOT NULL DEFAULT 0'],
   ['pagos', 'prepago_ref_id', 'INTEGER'],

@@ -394,10 +394,15 @@ server.listen(0, '127.0.0.1', async () => {
 
   // ---- catalogo / credito / gestiones ----
   await t('catálogo: alta de cliente, duplicado, RFC inválido y crédito', async () => {
-    const r = await call('a', 'POST', '/api/clientes', { cliente: 'Cliente Prueba SA', estacion_id: 1, no_cliente: 'P-1', rfc: 'abc010203xy1', limite: 50000, dias: 15, email: 'contacto@prueba.mx', telefono: '555-1234' });
+    const r = await call('a', 'POST', '/api/clientes', { cliente: 'Cliente Prueba SA', estacion_id: 1, no_cliente: 'P-1', rfc: 'abc010203xy1', limite: 50000, dias: 15, email: 'contacto@prueba.mx', telefono: '555-1234', modo_carga: 'Vales debito' });
     assert.equal(r.status, 201, JSON.stringify(r.data));
     let d = (await call('a', 'GET', '/api/cliente?k=' + enc(r.data.k_cliente))).data.cliente; assert.equal(d.limite, 50000); assert.equal(d.dias_credito, 15); assert.equal(d.rfc, 'ABC010203XY1');
-    assert.equal(d.email, 'contacto@prueba.mx'); assert.equal(d.telefono, '555-1234');
+    assert.equal(d.email, 'contacto@prueba.mx'); assert.equal(d.telefono, '555-1234'); assert.equal(d.modo_carga, 'Vales debito');
+    const listaClienteModo = await call('a', 'GET', '/api/clientes?q=Cliente Prueba SA');
+    assert.equal(listaClienteModo.data.rows[0].modo_carga, 'Vales debito');
+    assert.equal((await call('a', 'POST', '/api/clientes', {
+      cliente: 'Modo de carga inválido', estacion_id: 1, modo_carga: 'Vale desconocido',
+    })).status, 400);
     assert.equal((await call('a', 'POST', '/api/clientes', { cliente: 'Cliente Prueba SA', estacion_id: 1 })).status, 409);
     assert.equal((await call('a', 'POST', '/api/clientes', { cliente: 'Otro', estacion_id: 1, rfc: '123' })).status, 400);
     assert.equal((await call('a', 'POST', '/api/clientes', { cliente: 'Correo Inválido', estacion_id: 1, email: 'correo-mal' })).status, 400);
@@ -407,12 +412,12 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal(facturaCambioEstacion.status, 201, JSON.stringify(facturaCambioEstacion.data));
     assert.equal((await call('a', 'PUT', '/api/clientes', {
       k_cliente: r.data.k_cliente, cliente: 'Cliente Prueba SA Actualizado', estacion_id: 2, no_cliente: 'P-2',
-      rfc: 'abc010203xy1', limite: 75000, dias: 18, email: 'actualizado@prueba.mx', telefono: '555-9876',
+      rfc: 'abc010203xy1', limite: 75000, dias: 18, email: 'actualizado@prueba.mx', telefono: '555-9876', modo_carga: 'Flotilla Credito',
     })).status, 200);
     d = (await call('a', 'GET', '/api/cliente?k=' + enc(r.data.k_cliente))).data.cliente;
     assert.equal(d.cliente, 'Cliente Prueba SA Actualizado'); assert.equal(d.estacion_id, 2);
     assert.equal(d.limite, 75000); assert.equal(d.dias_credito, 18);
-    assert.equal(d.email, 'actualizado@prueba.mx'); assert.equal(d.telefono, '555-9876');
+    assert.equal(d.email, 'actualizado@prueba.mx'); assert.equal(d.telefono, '555-9876'); assert.equal(d.modo_carga, 'Flotilla Credito');
     assert.equal((await call('a', 'GET', '/api/facturas?q=FACTURA-MOVIMIENTO-ESTACION&estado=todas')).data.rows[0].estacion_id, 2);
     assert.equal((await call('a', 'GET', '/api/clientes?estacion=2&q=Cliente Prueba SA Actualizado')).data.total, 1);
     assert.equal((await call('a', 'GET', '/api/clientes?q=ABC010203')).data.total, 1);

@@ -273,8 +273,8 @@ Pantalla de monitoreo preventivo de riesgos calculada a la fecha de corte. Cuent
 La pestaña **Clientes** concentra el catálogo y la administración de la información financiera y de contacto de cada cliente.
 
 #### Catálogo de Clientes:
-- Formulario de alta rápida de clientes con: Nombre, estación asignada, número de cliente, RFC, límite de crédito, días de crédito, correo y teléfono.
-- Tabla maestra con búsqueda por RFC, nombre o folio, y filtros de riesgo: *Con saldo*, *Vencido*, *Excedido*, *Sin límite*, *Con saldo a favor*.
+- Formulario de alta rápida de clientes con: Nombre, estación asignada, número de cliente, RFC, límite de crédito, días de crédito, correo, teléfono y modo de carga (Vales debito, Vales Credito, Flotilla debito o Flotilla Credito).
+- Tabla maestra con búsqueda por RFC, nombre o folio, modos de carga entre teléfono y límite de crédito, y filtros de riesgo: *Con saldo*, *Vencido*, *Excedido*, *Sin límite*, *Con saldo a favor*.
 - Exportación completa a CSV.
 
 #### Ficha Individual del Cliente (Vista 360°):

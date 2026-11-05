@@ -62,7 +62,8 @@ const ESTADO_SQL = `CASE WHEN f.saldo<=${EPS} THEN 'PAGADA' WHEN f.fecha_vencimi
 
 // Resumen por cliente: cartera, vencido, por facturar, limite, debito
 function CLIENTES(corte) {
-  return `(SELECT c.k_cliente, c.cliente, c.no_cliente, ce.rfc AS rfc, ce.email AS email, ce.telefono AS telefono, c.estacion_id, e.nombre AS estacion,
+  return `(SELECT c.k_cliente, c.cliente, c.no_cliente, ce.rfc AS rfc, ce.email AS email, ce.telefono AS telefono,
+      ce.modo_carga AS modo_carga, c.estacion_id, e.nombre AS estacion,
       COALESCE(cr.limite,0) AS limite, COALESCE(cr.dias,0) AS dias_credito, cr.origen AS credito_origen,
       COALESCE(fa.saldo_fact,0) AS saldo_fact, COALESCE(fa.vencido,0) AS vencido, COALESCE(fa.n_fact,0) AS n_fact,
       COALESCE(fa.max_dias,0) AS max_dias, COALESCE(pf.por_facturar,0) AS por_facturar,
