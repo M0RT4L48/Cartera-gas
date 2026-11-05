@@ -528,33 +528,65 @@
     if (!puedeFacturar && !puedeEditarDespacho) { toast('No tienes permiso para esta acción.', 'bad'); return; }
     const cliente = String(el.dataset.cliente || 'Cliente');
     const k = el.dataset.k;
-    let pendientes;
+    let pendientes, facturasAnulables = [];
     try {
-      const r = await api('/api/por-facturar?' + qs(gp({ k })));
+      const [r, facturas] = await Promise.all([
+        api('/api/por-facturar?' + qs(gp({ k }))),
+        puedeFacturar ? api('/api/por-facturar/facturadas?' + qs({ k })) : Promise.resolve({ rows: [] }),
+      ]);
       pendientes = r.rows[0] && r.rows[0].items || [];
+      facturasAnulables = facturas.rows || [];
     } catch (e) { toast(e.message, 'bad'); return; }
-    if (!pendientes.length) { toast('Este cliente no tiene despachos pendientes de facturar.', 'warn'); await CG.route(true); return; }
+    if (!pendientes.length && !facturasAnulables.length) { toast('Este cliente no tiene despachos pendientes de facturar.', 'warn'); await CG.route(true); return; }
     modal(html`
       <h2>${puedeFacturar ? 'Seleccionar despachos para facturar' : 'Modificar despachos pendientes'}</h2>
       <form id="formEmitirFacturaCliente" class="form">
         <label>Cliente<input value="${cliente}" readonly></label>
-        ${puedeFacturar ? html`<label>Folio / No. factura<input name="no_factura" maxlength="80" required></label>
+        ${puedeFacturar && pendientes.length ? html`<label>Folio / No. factura<input name="no_factura" maxlength="80" required></label>
           <label>Fecha de factura<input name="fecha_factura" type="date" max="${hoyLocal()}" value="${hoyLocal()}" required></label>` : ''}
-        <label class="full">Filtrar por producto<select id="filtroProductoDespachos">
+        ${pendientes.length ? html`<label class="full">Filtrar por producto<select id="filtroProductoDespachos">
           ${opt('', 'Todos los productos')}
           ${opt('__sin_producto__', 'Sin producto')}
           ${S.cat.productos.map((p) => opt(p.nombre, p.nombre))}
-        </select></label>
+        </select></label>` : ''}
         <div class="full tablewrap nomax"><table><thead><tr><th>${puedeFacturar ? html`<input type="checkbox" id="seleccionarTodosDespachos" checked aria-label="Seleccionar todos los despachos">` : ''}</th><th><button type="button" class="btn small" data-sort-despacho="fecha_despacho">Fecha</button></th><th><button type="button" class="btn small" data-sort-despacho="despacho">Despacho</button></th><th><button type="button" class="btn small" data-sort-despacho="producto">Producto</button></th><th><button type="button" class="btn small" data-sort-despacho="grupo">Grupo</button></th><th class="n"><button type="button" class="btn small" data-sort-despacho="monto">Pendiente</button></th><th></th></tr></thead><tbody id="despachosEmitir">
-          ${pendientes.map((d) => html`<tr data-despacho-id="${d.id}" data-producto="${d.producto || ''}"><td>${puedeFacturar ? html`<input type="checkbox" name="despacho_id" value="${d.id}" data-monto="${Math.max(0, d.monto)}" checked>` : ''}</td>
+          ${pendientes.length ? pendientes.map((d) => html`<tr data-despacho-id="${d.id}" data-producto="${d.producto || ''}"><td>${puedeFacturar ? html`<input type="checkbox" name="despacho_id" value="${d.id}" data-monto="${Math.max(0, d.monto)}" checked>` : ''}</td>
             <td>${fdate(d.fecha_despacho)}</td><td>${d.despacho || ''}</td><td>${d.producto || ''}</td><td>${d.grupo || ''}</td><td class="n">${money(d.monto, 2)}</td>
             <td>${puedeEditarDespacho ? html`<button type="button" class="btn small" data-despacho-action="editar" data-id="${d.id}" aria-label="Editar despacho ${d.despacho || ''}" title="Editar despacho">
-              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg></button>` : ''}</td></tr>`)}</tbody>
+              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg></button>` : ''}</td></tr>`) : html`<tr><td colspan="7" class="empty">Sin despachos pendientes de facturar.</td></tr>`}</tbody>
           ${puedeFacturar ? html`<tfoot><tr><td colspan="5">Total seleccionado</td><td class="n strong" id="totalSeleccionado"></td><td></td></tr></tfoot>` : ''}</table></div>
+        ${puedeFacturar ? html`<div class="full">
+          <h3>Facturas emitidas desde despachos pendientes</h3>
+          <div class="tablewrap nomax"><table><thead><tr><th>Factura</th><th>Fecha</th><th>Despachos</th><th class="n">Importe</th><th></th></tr></thead><tbody id="facturasDespachosAnular">
+            ${facturasAnulables.length ? facturasAnulables.map((factura) => html`<tr>
+              <td>${factura.no_factura}</td><td>${fdate(factura.fecha_factura)}</td><td>${factura.despachos}</td><td class="n">${money(factura.importe, 2)}</td>
+              <td><button type="button" class="btn small danger" data-anular-factura data-k="${k}" data-estacion="${factura.estacion_id}" data-no-factura="${factura.no_factura}"
+                ${Number(factura.pagos) > 0 ? 'disabled title="No se puede anular: la factura tiene pagos asociados"'
+                  : Number(factura.agregada_excel) > 0 ? 'disabled title="No se puede anular: también existe en el resumen importado de Excel"' : ''}>Anular</button></td></tr>`) : html`<tr><td colspan="5" class="empty">Sin facturas emitidas desde despachos pendientes.</td></tr>`}
+          </tbody></table></div>
+        </div>` : ''}
         <div class="full err" id="emitirFacturaErr"></div>
-        <div class="full actions"><button type="button" class="btn" data-act="cerrar">Cerrar</button>${puedeFacturar ? html`<button type="submit" class="btn dark">Emitir factura</button>` : ''}</div>
+        <div class="full actions"><button type="button" class="btn" data-act="cerrar">Cerrar</button>${puedeFacturar && pendientes.length ? html`<button type="submit" class="btn dark">Emitir factura</button>` : ''}</div>
       </form>`, { wide: true });
     const form = $('#formEmitirFacturaCliente');
+    $('#facturasDespachosAnular')?.addEventListener('click', async (event) => {
+      const boton = event.target.closest('[data-anular-factura]');
+      if (!boton || boton.disabled) return;
+      if (!confirm(`¿Anular la factura ${boton.dataset.noFactura}? Se restaurarán todos sus despachos a “Por facturar”. Esta acción no se permite si tiene pagos asociados.`)) return;
+      boton.disabled = true;
+      try {
+        const resultado = await api('/api/cartera/facturas/anular-despachos', {
+          method: 'POST',
+          body: { k_cliente: boton.dataset.k, estacion_id: Number(boton.dataset.estacion), no_factura: boton.dataset.noFactura },
+        });
+        toast(`Factura ${resultado.no_factura} anulada. ${resultado.despachos} despacho(s) restaurado(s).`);
+        closeModal();
+        await CG.route(true);
+      } catch (error) {
+        toast(error.message, 'bad');
+        boton.disabled = false;
+      }
+    });
     const checks = () => [...form.querySelectorAll('input[name="despacho_id"]')];
     const aplicarFiltroProducto = () => {
       const producto = $('#filtroProductoDespachos').value;
@@ -565,7 +597,7 @@
           : Boolean(producto) && valor.toLocaleLowerCase('es-MX') !== producto.toLocaleLowerCase('es-MX');
       });
     };
-    $('#filtroProductoDespachos').addEventListener('change', aplicarFiltroProducto);
+    $('#filtroProductoDespachos')?.addEventListener('change', aplicarFiltroProducto);
     let columnaOrdenDespachos = '', direccionOrdenDespachos = 'asc';
     form.querySelector('thead').addEventListener('click', (event) => {
       const boton = event.target.closest('[data-sort-despacho]');
@@ -685,14 +717,14 @@
       if (event.key === 'Enter' && event.target.matches('input')) event.preventDefault();
     });
     const updateTotal = () => {
-      if (!puedeFacturar) return;
+      if (!puedeFacturar || !pendientes.length) return;
       const total = checks().filter((c) => c.checked).reduce((sum, c) => sum + Number(c.dataset.monto), 0);
       $('#totalSeleccionado').textContent = money(total, 2);
       const all = checks();
       $('#seleccionarTodosDespachos').checked = all.length > 0 && all.every((c) => c.checked);
       $('#seleccionarTodosDespachos').indeterminate = all.some((c) => c.checked) && !all.every((c) => c.checked);
     };
-    if (puedeFacturar) $('#seleccionarTodosDespachos').onchange = (e) => { checks().forEach((c) => { c.checked = e.target.checked; }); updateTotal(); };
+    if (puedeFacturar && pendientes.length) $('#seleccionarTodosDespachos').onchange = (e) => { checks().forEach((c) => { c.checked = e.target.checked; }); updateTotal(); };
     $('#despachosEmitir').onchange = updateTotal;
     updateTotal();
     form.onsubmit = async (e) => {

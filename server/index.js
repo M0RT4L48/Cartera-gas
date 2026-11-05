@@ -417,6 +417,17 @@ async function api(req, res, url) {
       ], rows);
     }
     if (p === '/api/cliente') { const k = query.get('k'); await verificaCliente(user, k); return send(res, 200, await Q.clienteDetalle({ corte: await Q.corteValido(query.get('corte')), k })); }
+    if (p === '/api/por-facturar/facturadas') {
+      const k = query.get('k');
+      await verificaCliente(user, k);
+      return send(res, 200, { rows: await q.all(`SELECT f.no_factura, MIN(f.fecha_factura) fecha_factura, f.estacion_id, e.nombre estacion,
+          COUNT(*) despachos, SUM(f.importe-f.abono) importe,
+          (SELECT COUNT(*) FROM pagos p WHERE p.k_cliente=f.k_cliente AND p.estacion_id=f.estacion_id AND p.no_factura=f.no_factura) pagos,
+          (SELECT COUNT(*) FROM fact_factura x WHERE x.k_cliente=f.k_cliente AND x.estacion_id=f.estacion_id AND x.no_factura=f.no_factura) agregada_excel
+        FROM v_cxc f JOIN dim_estacion e ON e.id=f.estacion_id
+        WHERE f.k_cliente=? AND f.facturada_desde_pendiente=1 AND f.estatus IN ('POR PAGAR','ABONADO')
+        GROUP BY f.k_cliente, f.estacion_id, f.no_factura ORDER BY MIN(f.fecha_factura) DESC, f.no_factura`, k) });
+    }
     if (p === '/api/por-facturar') return send(res, 200, await Q.porFacturar(await params(query, user)));
     if (p === '/api/debito') return send(res, 200, await Q.debitoResumen(await params(query, user)));
     if (p === '/api/debito/movimientos') { const pr = await params(query, user); if (pr.k) await verificaCliente(user, pr.k); return send(res, 200, await Q.debitoMovs(pr)); }
@@ -651,6 +662,46 @@ async function api(req, res, url) {
     return send(res, 201, { ok: true, id: Number(r.lastInsertRowid), k_cliente: cliente.k_cliente, fecha_despacho: fechaDespacho, despacho, producto, importe, no_factura: noFactura });
   }
 
+  if (m === 'POST' && p === '/api/cartera/facturas/anular-despachos') {
+    exigir(user, 'facturas');
+    const b = await readBody(req);
+    const cliente = await verificaCliente(user, txt(b.k_cliente, 200));
+    const noFactura = txt(b.no_factura, 80);
+    const estacionId = Number(b.estacion_id);
+    if (!noFactura || !Number.isInteger(estacionId) || estacionId !== cliente.estacion_id) {
+      throw new HttpError(400, 'La factura seleccionada es inválida');
+    }
+    const resultado = await tx(async () => {
+      const filas = await q.all(`SELECT id, origen FROM v_cxc
+        WHERE k_cliente=? AND estacion_id=? AND no_factura=? AND facturada_desde_pendiente=1
+          AND estatus IN ('POR PAGAR','ABONADO')`, cliente.k_cliente, estacionId, noFactura);
+      if (!filas.length) throw new HttpError(404, 'No hay despachos anulables para esta factura');
+      const totalFactura = await q.get(`SELECT COUNT(*) total FROM v_cxc
+        WHERE k_cliente=? AND estacion_id=? AND no_factura=? AND estatus<>'POR FACTURAR'`, cliente.k_cliente, estacionId, noFactura);
+      if (Number(totalFactura.total) !== filas.length) {
+        throw new HttpError(409, 'La factura contiene movimientos que no se pueden restaurar junto con estos despachos');
+      }
+      if (await q.get('SELECT 1 FROM fact_factura WHERE k_cliente=? AND estacion_id=? AND no_factura=? LIMIT 1', cliente.k_cliente, estacionId, noFactura)) {
+        throw new HttpError(409, 'No se puede anular: la factura también existe en el resumen importado de Excel');
+      }
+      if (await q.get('SELECT 1 FROM pagos WHERE k_cliente=? AND estacion_id=? AND no_factura=? LIMIT 1', cliente.k_cliente, estacionId, noFactura)) {
+        throw new HttpError(409, 'No se puede anular la factura porque tiene pagos asociados');
+      }
+      for (const fila of filas) {
+        const tabla = fila.origen === 'app' ? 'fact_cxc_app' : 'fact_cxc';
+        const id = fila.origen === 'app' ? fila.id - 2000000000 : fila.id;
+        const actualizado = await q.run(`UPDATE ${tabla} SET estatus='POR FACTURAR', fecha_factura=prev_fecha_factura,
+            no_factura=prev_no_factura, fecha_vencimiento=prev_fecha_vencimiento,
+            facturada_desde_pendiente=0, prev_fecha_factura=NULL, prev_no_factura=NULL, prev_fecha_vencimiento=NULL
+          WHERE id=? AND facturada_desde_pendiente=1 AND no_factura=? AND estatus IN ('POR PAGAR','ABONADO')`, id, noFactura);
+        if (actualizado.changes !== 1) throw new HttpError(409, 'Uno o más despachos cambiaron; no se anuló la factura');
+      }
+      return { despachos: filas.length };
+    });
+    await L.bitacora(user, 'FACTURA_ANULADA', `${noFactura} ${cliente.k_cliente} (${resultado.despachos} despachos)`, ip(req));
+    return send(res, 200, { ok: true, no_factura: noFactura, despachos: resultado.despachos });
+  }
+
   // ----- pagos CxC -----
   if (m === 'POST' && (p === '/api/pagos' || p === '/api/pagos/lote')) {
     exigir(user, 'pagos');
@@ -840,8 +891,9 @@ async function api(req, res, url) {
         ...ids, cliente.k_cliente, cliente.estacion_id);
       if (!filas.length) throw new HttpError(400, 'No hay despachos por facturar para este cliente');
       if (filas.length !== ids.length) throw new HttpError(400, 'Los despachos seleccionados no coinciden con los pendientes de facturar');
-      if (await q.get('SELECT 1 FROM v_cxc WHERE k_cliente=? AND estacion_id=? AND no_factura=? AND estatus IN (\'POR PAGAR\',\'ABONADO\')',
-        cliente.k_cliente, cliente.estacion_id, noFactura)) {
+      if (await q.get(`SELECT 1 FROM v_cxc WHERE k_cliente=? AND estacion_id=? AND no_factura=? AND estatus IN ('POR PAGAR','ABONADO')
+          UNION ALL SELECT 1 FROM fact_factura WHERE k_cliente=? AND estacion_id=? AND no_factura=? LIMIT 1`,
+        cliente.k_cliente, cliente.estacion_id, noFactura, cliente.k_cliente, cliente.estacion_id, noFactura)) {
         throw new HttpError(409, 'Ya existe una factura con ese número para este cliente');
       }
       const suma = filas.reduce((s, f) => s + Math.max(0, Number(f.importe || 0) - Number(f.abono || 0)), 0);
@@ -852,9 +904,17 @@ async function api(req, res, url) {
       await tx(async () => {
         for (const fila of filas) {
           if (fila.origen === 'app') {
-            await q.run('UPDATE fact_cxc_app SET estatus=?, fecha_factura=?, no_factura=?, fecha_vencimiento=? WHERE id=?', 'POR PAGAR', fechaFactura, noFactura, fechaVencimiento, fila.id - 2000000000);
+            const actualizado = await q.run(`UPDATE fact_cxc_app SET facturada_desde_pendiente=1,
+                prev_fecha_factura=fecha_factura, prev_no_factura=no_factura, prev_fecha_vencimiento=fecha_vencimiento,
+                estatus=?, fecha_factura=?, no_factura=?, fecha_vencimiento=? WHERE id=? AND estatus='POR FACTURAR' AND importe-abono>0`,
+              'POR PAGAR', fechaFactura, noFactura, fechaVencimiento, fila.id - 2000000000);
+            if (actualizado.changes !== 1) throw new HttpError(409, 'Uno o más despachos cambiaron; no se emitió la factura');
           } else {
-            await q.run('UPDATE fact_cxc SET estatus=?, fecha_factura=?, no_factura=?, fecha_vencimiento=? WHERE id=?', 'POR PAGAR', fechaFactura, noFactura, fechaVencimiento, fila.id);
+            const actualizado = await q.run(`UPDATE fact_cxc SET facturada_desde_pendiente=1,
+                prev_fecha_factura=fecha_factura, prev_no_factura=no_factura, prev_fecha_vencimiento=fecha_vencimiento,
+                estatus=?, fecha_factura=?, no_factura=?, fecha_vencimiento=? WHERE id=? AND estatus='POR FACTURAR' AND importe-abono>0`,
+              'POR PAGAR', fechaFactura, noFactura, fechaVencimiento, fila.id);
+            if (actualizado.changes !== 1) throw new HttpError(409, 'Uno o más despachos cambiaron; no se emitió la factura');
           }
         }
       });
