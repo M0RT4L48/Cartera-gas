@@ -220,7 +220,6 @@ Concentra todos aquellos despachos de combustible otorgados a crédito que han s
   - Solicita el número de factura y fecha de emisión.
   - Al procesar, los despachos seleccionados se marcan como facturados y se genera la nueva factura en **Cartera Activa** con su saldo correspondiente.
   - En el mismo modal se listan las facturas emitidas desde despachos pendientes. **Anular** restaura sus despachos a **Por facturar**, incluyendo los datos de factura previos. No se permite si existe algún pago asociado a la factura.
-  - Solo pueden anularse facturas emitidas después de esta actualización; las anteriores no guardaron los datos previos necesarios para restaurarlas exactamente.
 
 ---
 
