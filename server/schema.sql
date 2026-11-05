@@ -47,11 +47,7 @@ CREATE TABLE IF NOT EXISTS fact_cxc (          -- una fila por despacho
   fecha_factura     TEXT,
   no_factura        TEXT,
   fecha_pago        TEXT,
-  fecha_vencimiento TEXT,
-  facturada_desde_pendiente INTEGER NOT NULL DEFAULT 0,
-  prev_fecha_factura TEXT,
-  prev_no_factura TEXT,
-  prev_fecha_vencimiento TEXT
+  fecha_vencimiento TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_cxc_cli ON fact_cxc(k_cliente);
 CREATE INDEX IF NOT EXISTS ix_cxc_fac ON fact_cxc(k_cliente, no_factura);
@@ -198,10 +194,6 @@ CREATE TABLE IF NOT EXISTS fact_cxc_app (
   no_factura        TEXT NOT NULL,
   fecha_pago        TEXT,
   fecha_vencimiento TEXT,
-  facturada_desde_pendiente INTEGER NOT NULL DEFAULT 0,
-  prev_fecha_factura TEXT,
-  prev_no_factura TEXT,
-  prev_fecha_vencimiento TEXT,
   usuario_id        INTEGER,
   creado            TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -255,11 +247,11 @@ DROP VIEW IF EXISTS v_fact_factura;
 DROP VIEW IF EXISTS v_cxc;
 CREATE VIEW v_cxc AS
   SELECT id, fecha_despacho, despacho, producto, importe, abono, k_cliente, estacion_id, estatus, grupo,
-         fecha_factura, no_factura, fecha_pago, fecha_vencimiento, 'excel' AS origen, facturada_desde_pendiente
+         fecha_factura, no_factura, fecha_pago, fecha_vencimiento, 'excel' AS origen
     FROM fact_cxc
   UNION ALL
   SELECT 2000000000+id, fecha_despacho, despacho, producto, importe, abono, k_cliente, estacion_id, estatus, grupo,
-         fecha_factura, no_factura, fecha_pago, fecha_vencimiento, 'app', facturada_desde_pendiente
+         fecha_factura, no_factura, fecha_pago, fecha_vencimiento, 'app'
     FROM fact_cxc_app;
 
 CREATE VIEW v_fact_factura AS
