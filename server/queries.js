@@ -28,7 +28,8 @@ function FACTURAS() {
       UNION ALL
       SELECT k_cliente, estacion_id, no_factura, MIN(fecha_factura), MIN(fecha_vencimiento),
         MIN(fecha_despacho), MAX(fecha_despacho), COUNT(*), SUM(importe), SUM(abono),
-        MAX(CASE WHEN estatus IN ('POR PAGAR','ABONADO') THEN 1 ELSE 0 END), 1, MIN(id)
+        MAX(CASE WHEN estatus IN ('POR PAGAR','ABONADO') THEN 1 ELSE 0 END),
+        MIN(CASE WHEN facturada_desde_pendiente=1 THEN 0 ELSE 1 END), MIN(id)
       FROM fact_cxc_app WHERE no_factura IS NOT NULL AND estatus<>'POR FACTURAR'
       GROUP BY k_cliente, estacion_id, no_factura
     ) f GROUP BY k_cliente, estacion_id, no_factura)`;
@@ -193,6 +194,16 @@ async function dashboard({ corte, est, estaciones }) {
 const CAMPOS_FECHA = { factura: 'fecha_factura', vencimiento: 'fecha_vencimiento', despacho: 'ultimo_despacho' };
 const ORDEN_FAC = { saldo: 'f.saldo', dias: 'f.dias_vencido', importe: 'f.importe', fecha_factura: 'f.fecha_factura',
   vencimiento: 'f.fecha_vencimiento', cliente: 'c.cliente', factura: 'f.no_factura' };
+const PUEDE_ANULAR_DESPACHOS = (alias = 'f') => `CASE WHEN
+  EXISTS (SELECT 1 FROM v_cxc d WHERE d.k_cliente=${alias}.k_cliente AND d.estacion_id=${alias}.estacion_id
+    AND d.no_factura=${alias}.no_factura AND d.facturada_desde_pendiente=1 AND d.estatus IN ('POR PAGAR','ABONADO'))
+  AND NOT EXISTS (SELECT 1 FROM v_cxc d WHERE d.k_cliente=${alias}.k_cliente AND d.estacion_id=${alias}.estacion_id
+    AND d.no_factura=${alias}.no_factura AND (d.facturada_desde_pendiente<>1 OR d.estatus NOT IN ('POR PAGAR','ABONADO')))
+  AND NOT EXISTS (SELECT 1 FROM pagos p WHERE p.k_cliente=${alias}.k_cliente AND p.estacion_id=${alias}.estacion_id
+    AND p.no_factura=${alias}.no_factura)
+  AND NOT EXISTS (SELECT 1 FROM fact_factura x WHERE x.k_cliente=${alias}.k_cliente AND x.estacion_id=${alias}.estacion_id
+    AND x.no_factura=${alias}.no_factura)
+  THEN 1 ELSE 0 END`;
 function filtrosFacturas(p, wh, pr) {
   filtrarEstaciones('f.estacion_id', p, wh, pr);
   if (p.k) { wh.push('f.k_cliente=?'); pr.push(p.k); }
@@ -222,7 +233,8 @@ async function facturas(p) {
   const tot = await q.get(`SELECT COUNT(*) n, COALESCE(SUM(f.saldo),0) saldo, COALESCE(SUM(f.importe),0) importe ${from}`, ...pr);
   const rows = await q.all(`SELECT f.k_cliente, f.estacion_id, e.nombre estacion, c.cliente, f.no_factura, f.fecha_factura, f.fecha_vencimiento,
       f.ultimo_despacho, f.despachos, f.importe, f.abono, f.pagos_app, f.saldo, f.dias_vencido,
-      ${ESTADO_SQL} estado, CASE WHEN f.saldo>${EPS} THEN ${RANGO_SQL()} ELSE NULL END rango
+      ${ESTADO_SQL} estado, CASE WHEN f.saldo>${EPS} THEN ${RANGO_SQL()} ELSE NULL END rango,
+      ${PUEDE_ANULAR_DESPACHOS()} puede_anular_despachos
     ${from} ORDER BY ${orden} LIMIT ? OFFSET ?`, ...pr, size, (page - 1) * size);
   return { total: tot.n, suma_saldo: tot.saldo, suma_importe: tot.importe, page, size, rows };
 }
@@ -231,6 +243,9 @@ async function facturaDetalle({ corte, k, est, no }) {
     FROM ${FAC(corte)} f JOIN dim_cliente c ON c.k_cliente=f.k_cliente JOIN dim_estacion e ON e.id=f.estacion_id
     WHERE f.k_cliente=? AND f.estacion_id=? AND f.no_factura=?`, k, est, no);
   if (!f) throw new HttpError(404, 'Factura no encontrada');
+  const puedeAnular = await q.get(`SELECT ${PUEDE_ANULAR_DESPACHOS('f')} puede_anular
+    FROM (SELECT ? k_cliente, ? estacion_id, ? no_factura) f`, k, est, no);
+  f.puede_anular_despachos = Number(puedeAnular.puede_anular);
   const despachos = await q.all(`SELECT f.id, f.fecha_despacho, f.despacho, f.producto, f.importe, f.abono, f.estatus, f.grupo, f.fecha_pago,
       CASE WHEN f.fecha_factura IS NOT NULL
         THEN date(f.fecha_factura, printf('%+d days', COALESCE(cr.dias,0)))
@@ -276,7 +291,8 @@ async function clienteDetalle({ corte, k }) {
     WHERE f.k_cliente=? AND f.abierta=1 AND f.saldo>${EPS} GROUP BY 1`, k);
   const am = Object.fromEntries(aging.map((a) => [a.rango, a.monto]));
   const abiertas = await q.all(`SELECT f.no_factura, f.fecha_factura, f.fecha_vencimiento, f.despachos, f.importe, f.abono, f.pagos_app, f.saldo,
-      f.dias_vencido, f.estacion_id, ${ESTADO_SQL} estado, ${RANGO_SQL()} rango FROM ${FAC(corte)} f
+      f.dias_vencido, f.estacion_id, ${ESTADO_SQL} estado, ${RANGO_SQL()} rango,
+      ${PUEDE_ANULAR_DESPACHOS()} puede_anular_despachos FROM ${FAC(corte)} f
     WHERE f.k_cliente=? AND f.abierta=1 AND f.saldo>${EPS} ORDER BY COALESCE(f.fecha_vencimiento, f.fecha_factura, f.ultimo_despacho), f.no_factura`, k);
   const porFacturar = await q.all(`SELECT id, fecha_despacho, despacho, producto, importe, abono, grupo,
       CAST(julianday(?)-julianday(fecha_despacho) AS INTEGER) dias FROM v_cxc

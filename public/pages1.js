@@ -32,7 +32,8 @@
             <tbody>${r.rows.length ? r.rows.map((f) => html`<tr class="click" data-act="factura" data-k="${f.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">
               <td class="wrap">${f.cliente}</td><td>${corto(f.estacion)}</td><td>${f.no_factura}</td><td>${fdate(f.fecha_factura)}</td><td>${fdate(f.fecha_vencimiento)}</td>
               <td class="n">${f.saldo > 0.005 ? diasCell(f.dias_vencido) : ''}</td><td>${badge(f.estado)}</td><td class="n">${money(f.importe)}</td><td class="n strong">${money(f.saldo)}</td>
-              <td>${can('pagos') && f.saldo > 0.005 ? html`<button class="btn small" data-act="pago" data-k="${f.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">Pago</button>` : ''}</td></tr>`)
+              <td>${can('pagos') && f.saldo > 0.005 ? html`<button class="btn small" data-act="pago" data-k="${f.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">Pago</button>` : ''}
+                ${can('facturas') && f.puede_anular_despachos ? html`<button class="btn small danger" data-act="anularDespachosFactura" data-k="${f.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">Anular</button>` : ''}</td></tr>`)
               : html`<tr><td colspan="10" class="empty">No hay facturas con estos filtros.</td></tr>`}</tbody>
             <tfoot><tr><td colspan="7">Totales de la selección</td><td class="n">${money(r.suma_importe)}</td><td class="n">${money(r.suma_saldo)}</td><td></td></tr></tfoot></table></div>
           ${pager(st, r.total, r.size)}`.s;
@@ -143,6 +144,8 @@
         </dl>
         ${can('facturas') && f.editable && f.app_id ? html`<div style="margin-bottom:12px">
           <button class="btn" data-act="editarFactura" data-id="${f.app_id}">Editar factura capturada</button></div>` : ''}
+        ${can('facturas') && f.puede_anular_despachos ? html`<div style="margin-bottom:12px">
+          <button class="btn danger" data-act="anularDespachosFactura" data-k="${f.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">Anular factura y restaurar despachos</button></div>` : ''}
         ${can('pagos') && f.saldo > 0.005 ? html`<div style="margin-bottom:12px"><button class="btn accent" data-act="pago" data-k="${f.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">Registrar pago</button>
           <a class="btn" href="#/pagos?k=${encodeURIComponent(f.k_cliente)}" data-act="cerrar">Aplicar un cargo a varias facturas (FIFO)</a></div>` : ''}
         <h3 style="font-size:14px;margin:6px 0">Pagos capturados en la aplicación</h3>
@@ -155,6 +158,23 @@
           ${d.despachos.map((x) => html`<tr><td>${fdate(x.fecha_despacho)}</td><td>${x.despacho}</td><td>${x.producto || ''}</td><td>${x.grupo}</td><td>${x.estatus}</td><td class="n">${money(x.importe, 2)}</td><td class="n">${money(x.abono, 2)}</td><td>${fdate(x.fecha_pago)}</td></tr>`)}</tbody></table></div>
         <div class="actions"><button class="btn" data-act="cerrar">Cerrar</button></div>`, { wide: true });
     } catch (e) { toast(e.message, true); }
+  };
+  CG.acts.anularDespachosFactura = async (el) => {
+    const noFactura = el.dataset.no;
+    if (!confirm(`¿Anular la factura ${noFactura} y restaurar sus despachos a “Por facturar”? No se puede anular si tiene pagos asociados.`)) return;
+    el.disabled = true;
+    try {
+      const resultado = await api('/api/cartera/facturas/anular-despachos', {
+        method: 'POST',
+        body: { k_cliente: el.dataset.k, estacion_id: Number(el.dataset.est), no_factura: noFactura },
+      });
+      toast(`Factura ${resultado.no_factura} anulada. ${resultado.despachos} despacho(s) restaurado(s).`);
+      closeModal();
+      await CG.route(true);
+    } catch (e) {
+      toast(e.message, 'bad');
+      el.disabled = false;
+    }
   };
   CG.acts.editarFactura = async (el) => {
     const id = Number(el.dataset.id);
@@ -459,7 +479,8 @@
       abiertas: () => d.abiertas.length ? html`<div class="tablewrap nomax"><table><thead><tr><th>Factura</th><th>F. factura</th><th>Vencimiento</th><th class="n">Días</th><th>Estado</th><th class="n">Importe</th><th class="n">Saldo</th><th></th></tr></thead><tbody>
         ${d.abiertas.map((f) => html`<tr class="click" data-act="factura" data-k="${c.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}"><td>${f.no_factura}</td><td>${fdate(f.fecha_factura)}</td><td>${fdate(f.fecha_vencimiento)}</td>
           <td class="n">${diasCell(f.dias_vencido)}</td><td>${badge(f.estado)}</td><td class="n">${money(f.importe)}</td><td class="n strong">${money(f.saldo)}</td>
-          <td>${can('pagos') ? html`<button class="btn small" data-act="pago" data-k="${c.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">Pago</button>` : ''}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">Sin facturas abiertas.</div>`,
+          <td>${can('pagos') ? html`<button class="btn small" data-act="pago" data-k="${c.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">Pago</button>` : ''}
+            ${can('facturas') && f.puede_anular_despachos ? html`<button class="btn small danger" data-act="anularDespachosFactura" data-k="${c.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">Anular</button>` : ''}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">Sin facturas abiertas.</div>`,
       porfacturar: () => d.por_facturar.length ? html`<div class="tablewrap nomax"><table><thead><tr><th>Fecha despacho</th><th>Despacho</th><th>Producto</th><th>Grupo</th><th class="n">Días</th><th class="n">Importe</th></tr></thead><tbody>
         ${d.por_facturar.map((x) => html`<tr><td>${fdate(x.fecha_despacho)}</td><td>${x.despacho}</td><td>${x.producto || ''}</td><td>${x.grupo}</td><td class="n">${x.dias}</td><td class="n">${money(x.importe - x.abono, 2)}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">Sin despachos por facturar.</div>`,
       debito: () => html`<div class="grid g3" style="margin-bottom:12px">

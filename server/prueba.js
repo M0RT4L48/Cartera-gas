@@ -782,6 +782,8 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal(despachoEditado.producto, cambiosDespacho.producto);
     assert.equal(despachoEditado.grupo, cambiosDespacho.grupo);
     assert.equal(despachoEditado.monto, cambiosDespacho.monto);
+    const datosPreviosDespacho = await L.q.get('SELECT estatus,fecha_factura,no_factura,fecha_vencimiento FROM fact_cxc_app WHERE id=?',
+      despachoEditar.id - 2000000000);
     const idDespachoExcel = 1900000000 + (process.pid % 10000000);
     await L.q.run(`INSERT INTO fact_cxc(id,fecha_despacho,despacho,importe,abono,k_cliente,estacion_id,estatus,grupo)
       VALUES (?,?,?,?,?,?,?,?,?)`, idDespachoExcel, '2026-10-25', 'DESPACHO-EXCEL', 37, 5,
@@ -795,7 +797,22 @@ server.listen(0, '127.0.0.1', async () => {
       assert.equal((await L.q.get('SELECT importe,abono FROM fact_cxc WHERE id=?', idDespachoExcel)).importe, 47);
       const audit = await L.q.get("SELECT detalle FROM bitacora WHERE accion='DESPACHO_EDITA' AND detalle LIKE ?", `%#${idDespachoExcel}%`);
       assert.ok(audit && audit.detalle.includes('DESPACHO-EXCEL-EDITADO'));
-    } finally { await L.q.run('DELETE FROM fact_cxc WHERE id=?', idDespachoExcel); }
+        const datosPreviosExcel = await L.q.get('SELECT fecha_factura,no_factura,fecha_vencimiento FROM fact_cxc WHERE id=?', idDespachoExcel);
+        const facturaExcel = await call('a', 'POST', '/api/cartera/facturas', {
+          k_cliente: altaCliente.data.k_cliente, no_factura: 'FACTURA-EXCEL-RESTAURAR', fecha_factura: '2026-10-27',
+          facturar_por_facturar: true, ids: [idDespachoExcel],
+        });
+        assert.equal(facturaExcel.status, 201, JSON.stringify(facturaExcel.data));
+        const anularExcel = await call('a', 'POST', '/api/cartera/facturas/anular-despachos', {
+          k_cliente: altaCliente.data.k_cliente, estacion_id: 1, no_factura: 'FACTURA-EXCEL-RESTAURAR',
+        });
+        assert.equal(anularExcel.status, 200, JSON.stringify(anularExcel.data));
+        const restauradoExcel = await L.q.get('SELECT estatus,fecha_factura,no_factura,fecha_vencimiento FROM fact_cxc WHERE id=?', idDespachoExcel);
+        assert.equal(restauradoExcel.estatus, 'POR FACTURAR');
+        assert.equal(restauradoExcel.fecha_factura, datosPreviosExcel.fecha_factura);
+        assert.equal(restauradoExcel.no_factura, datosPreviosExcel.no_factura);
+        assert.equal(restauradoExcel.fecha_vencimiento, datosPreviosExcel.fecha_vencimiento);
+      } finally { await L.q.run('DELETE FROM fact_cxc WHERE id=?', idDespachoExcel); }
     const sinSeleccion = await call('a', 'POST', '/api/cartera/facturas', {
       k_cliente: altaCliente.data.k_cliente, no_factura: 'SIN-SELECCION', fecha_factura: '2026-10-27', facturar_por_facturar: true, ids: [],
     });
@@ -812,6 +829,15 @@ server.listen(0, '127.0.0.1', async () => {
     }));
     assert.equal(detalleFacturaProducto.status, 200, JSON.stringify(detalleFacturaProducto.data));
     assert.equal(detalleFacturaProducto.data.despachos[0].producto, 'Diesel');
+    assert.equal(detalleFacturaProducto.data.factura.puede_anular_despachos, 1);
+    assert.equal((await call('a', 'PUT', '/api/cartera/facturas/' + (despachoEditar.id - 2000000000), {
+      no_factura: 'FACTURA-SELECCION-CAMBIO', importe: 95.25, fecha_factura: '2026-10-27',
+    })).status, 409);
+    const facturaListado = (await call('a', 'GET', '/api/facturas?q=FACTURA-SELECCION&estado=todas')).data.rows[0];
+    assert.equal(facturaListado.puede_anular_despachos, 1);
+    const facturaCliente = (await call('a', 'GET', '/api/cliente?k=' + enc(altaCliente.data.k_cliente))).data.abiertas
+      .find((factura) => factura.no_factura === 'FACTURA-SELECCION');
+    assert.equal(facturaCliente.puede_anular_despachos, 1);
     const restante = await call('a', 'GET', '/api/por-facturar?k=' + enc(altaCliente.data.k_cliente));
     assert.equal(restante.data.rows[0].despachos, 1);
     assert.equal(restante.data.rows[0].monto, 120);
@@ -822,8 +848,41 @@ server.listen(0, '127.0.0.1', async () => {
     });
     assert.equal(nuevo.status, 201, JSON.stringify(nuevo.data));
     assert.equal(nuevo.data.fecha_vencimiento, '2026-11-04');
+    assert.equal((await call('a', 'POST', '/api/cartera/facturas/anular-despachos', {
+      k_cliente: altaCliente.data.k_cliente, estacion_id: 1, no_factura: 'PRUEBA-MANUAL-NUEVO',
+    })).status, 404);
     const clienteNuevo = (await call('a', 'GET', '/api/cliente?k=' + enc(altaCliente.data.k_cliente))).data;
     assert.equal(clienteNuevo.cliente.saldo_total, 123.45 + 95.25 + 120);
+    assert.equal((await call('l', 'POST', '/api/cartera/facturas/anular-despachos', {
+      k_cliente: altaCliente.data.k_cliente, estacion_id: 1, no_factura: 'FACTURA-SELECCION',
+    })).status, 403);
+    const anulacionDespacho = await call('a', 'POST', '/api/cartera/facturas/anular-despachos', {
+      k_cliente: altaCliente.data.k_cliente, estacion_id: 1, no_factura: 'FACTURA-SELECCION',
+    });
+    assert.equal(anulacionDespacho.status, 200, JSON.stringify(anulacionDespacho.data));
+    assert.equal(anulacionDespacho.data.despachos, 1);
+    const restauradoDespacho = await L.q.get('SELECT estatus,fecha_factura,no_factura,fecha_vencimiento,fecha_despacho,despacho,producto,grupo,importe FROM fact_cxc_app WHERE id=?',
+      despachoEditar.id - 2000000000);
+    assert.equal(restauradoDespacho.estatus, 'POR FACTURAR');
+    assert.equal(restauradoDespacho.fecha_factura, datosPreviosDespacho.fecha_factura);
+    assert.equal(restauradoDespacho.no_factura, datosPreviosDespacho.no_factura);
+    assert.equal(restauradoDespacho.fecha_vencimiento, datosPreviosDespacho.fecha_vencimiento);
+    assert.equal(restauradoDespacho.fecha_despacho, cambiosDespacho.fecha_despacho);
+    assert.equal(restauradoDespacho.despacho, cambiosDespacho.despacho);
+    assert.equal(restauradoDespacho.producto, cambiosDespacho.producto);
+    assert.equal(restauradoDespacho.grupo, cambiosDespacho.grupo);
+    assert.equal(restauradoDespacho.importe, cambiosDespacho.monto);
+    const otraFacturaDespacho = await call('a', 'POST', '/api/cartera/facturas', {
+      k_cliente: altaCliente.data.k_cliente, no_factura: 'FACTURA-DESPACHO-CON-PAGO', fecha_factura: '2026-10-29',
+      facturar_por_facturar: true, ids: [restante.data.rows[0].items[0].id],
+    });
+    assert.equal(otraFacturaDespacho.status, 201, JSON.stringify(otraFacturaDespacho.data));
+    await L.q.run('INSERT INTO pagos(k_cliente,estacion_id,no_factura,fecha,monto,metodo) VALUES (?,?,?,?,?,?)',
+      altaCliente.data.k_cliente, 1, 'FACTURA-DESPACHO-CON-PAGO', '2026-10-29', 10, 'Efectivo');
+    assert.equal((await call('a', 'POST', '/api/cartera/facturas/anular-despachos', {
+      k_cliente: altaCliente.data.k_cliente, estacion_id: 1, no_factura: 'FACTURA-DESPACHO-CON-PAGO',
+    })).status, 409);
+    await L.q.run('DELETE FROM pagos WHERE k_cliente=? AND no_factura=?', altaCliente.data.k_cliente, 'FACTURA-DESPACHO-CON-PAGO');
     assert.equal((await call('l', 'POST', '/api/cartera/facturas', { ...body, k_cliente: cliPagos.k_cliente })).status, 403);
     for (const id of [existente.data.id, nuevo.data.id, pendiente1.data.id, pendiente2.data.id, facturaRecalculo.data.id]) await L.q.run('DELETE FROM fact_cxc_app WHERE id=?', id);
     await L.q.run('DELETE FROM pagos WHERE no_factura=? AND k_cliente=?', 'PRUEBA-MANUAL-EDIT', cliPagos.k_cliente);

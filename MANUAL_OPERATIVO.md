@@ -182,6 +182,7 @@ Es la pantalla central de cuentas por cobrar. Muestra todas las facturas de cré
   - Botón **⬇ CSV**: Exporta la lista filtrada con fórmulas seguras contra inyección.
 - **Detalle de Factura (Modal al hacer clic en el renglón):**
   - Desglose completo: Importe original, abonos en Excel, pagos capturados en la app y saldo pendiente actual.
+  - Para facturas emitidas desde despachos pendientes después de esta actualización aparece **Anular** junto a **Pago**; restaura sus despachos a **Por facturar**. No está disponible si hay pagos asociados ni para facturas anteriores que no guardaron el estado previo.
   - Lista de pagos registrados en la aplicación con opción de **Anular** (restableciendo el saldo y devolviendo el prepago cuando corresponda).
   - Si un pago de prepago quedó anulado sin registrar su devolución, aparece **Reparar prepago** para regularizar el saldo a favor.
   - Desglose de despachos de combustible individuales que integran esa factura.
