@@ -687,7 +687,8 @@
       ['mas_reciente', 'Más reciente', 'date'],
       ['dias_antiguedad', 'Antigüedad (días)', 'number'],
     ];
-    const puedeFacturar = can('facturas');
+    const puedeFacturar = can('facturas') || can('facturas_crear');
+    const puedeRegistrarDespachos = can('facturas') || can('despachos_crear');
     const puedeEditarDespacho = can('editar_despacho');
     let lista = [];
     try { lista = await CG.clientesLista(false); } catch (e) { return errorView(e); }
@@ -726,7 +727,7 @@
         </div>
         <div id="cargaPorFacturarOut" role="status" aria-live="polite" style="margin-top:10px"></div>
       </form>` : ''}
-      ${can('facturas') ? html`<form id="formPorFacturar" class="formcard" style="margin-bottom:18px">
+      ${puedeRegistrarDespachos ? html`<form id="formPorFacturar" class="formcard" style="margin-bottom:18px">
         <h3>Registrar monto pendiente por facturar</h3>
         <div class="grid g4">
           <label>Cliente${pick.html}</label>
@@ -770,6 +771,8 @@
           output.innerHTML = html`<div class="note" style="white-space:pre-wrap">${err.message}</div>`.s;
         } finally { btn.disabled = false; }
       };
+    }
+    if (puedeRegistrarDespachos) {
       $('#formPorFacturar').onsubmit = async (e) => {
         e.preventDefault();
         const form = e.currentTarget;
@@ -789,7 +792,7 @@
     bindFilters($('#filtros'), st, load); load();
   };
   CG.acts.emitirFacturaCliente = async (el) => {
-    const puedeFacturar = can('facturas');
+    const puedeFacturar = can('facturas') || can('facturas_crear');
     const puedeEditarDespacho = can('editar_despacho');
     if (!puedeFacturar && !puedeEditarDespacho) { toast('No tienes permiso para esta acción.', 'bad'); return; }
     const cliente = String(el.dataset.cliente || 'Cliente');
@@ -1070,7 +1073,9 @@
         <td><button class="btn small" data-act="editUsuario" data-u="${JSON.stringify(u)}">Editar</button> <button class="btn small" data-act="resetUsuario" data-id="${u.id}" data-name="${u.usuario}">Restablecer contraseña</button></td></tr>`)}</tbody></table></div>
       <div class="grid g2" style="margin-top:18px"><div class="card"><h3>Permisos por rol</h3><div class="tablewrap nomax" style="border:0"><table><tbody>
         <tr><td><b>Administrador General</b></td><td class="wrap">Todo: consultar, registrar y aplicar anticipos, aplicar pagos, gestionar clientes y crédito, administrar usuarios, cargar el Excel y ver la bitácora.</td></tr>
-        <tr><td><b>Gestor de Estación</b></td><td class="wrap">Consultar, exportar, registrar y aplicar anticipos, registrar pagos, gestiones de cobranza, altas de clientes y edición de crédito (dentro de su estación).</td></tr>
+        <tr><td><b>Gestor de Cartera</b></td><td class="wrap">Consultar, exportar, registrar y aplicar anticipos, registrar pagos, gestiones de cobranza, altas de clientes y edición de crédito (dentro de su estación).</td></tr>
+        <tr><td><b>Capturista</b></td><td class="wrap">Registrar despachos/consumos por facturar y emitir facturas. No puede editar, modificar, anular ni eliminar despachos o facturas.</td></tr>
+        <tr><td><b>Pagos</b></td><td class="wrap">Registrar pagos únicamente. No puede editar, anular ni eliminar pagos.</td></tr>
         <tr><td><b>Supervisor</b></td><td class="wrap">Puede cancelar Facturas de Anticipo y aplicaciones, modificar importes de despachos pendientes y anular pagos dentro de sus estaciones asignadas; no registra pagos ni anticipos ni administra usuarios.</td></tr>
         <tr><td><b>Consulta</b></td><td class="wrap">Solo lectura y exportación.</td></tr></tbody></table></div></div>
         <div class="card"><h3>Bitácora de actividad</h3><p class="mut">Registro de accesos, pagos, movimientos de débito, cambios de crédito, altas y cargas de datos.</p><a class="btn dark" href="#/bitacora">Ver bitácora</a></div></div>`);

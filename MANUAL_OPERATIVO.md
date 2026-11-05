@@ -48,11 +48,15 @@ El sistema implementa control de acceso basado en roles (RBAC) con alcance por e
 | Rol | Alcance de Estaciones | Permisos Operativos |
 |---|---|---|
 | **Administrador General** | Acceso a todas o estaciones específicas | Acceso total: Usuarios, bitácora de auditoría, carga y reemplazo de Excel, catálogos maestros (bancos, métodos), clientes, crédito, facturas, anticipos, cobros y aplicaciones. |
-| **Gestor de Estación** | Limitado a una o varias estaciones asignadas | Operación diaria en sus estaciones: Registrar facturas y anticipos, aplicar anticipos y cobros, dar de alta clientes y editar condiciones de crédito, y registrar gestiones de cobranza. |
+| **Gestor de Cartera** | Limitado a una o varias estaciones asignadas | Operación diaria en sus estaciones: Registrar facturas y anticipos, aplicar anticipos y cobros, dar de alta clientes y editar condiciones de crédito, y registrar gestiones de cobranza. |
+| **Capturista** | Global o por estación | Registrar despachos/consumos por facturar y emitir facturas. No puede editar, modificar, anular ni eliminar despachos o facturas. |
+| **Pagos** | Global o por estación | Registrar pagos únicamente. No puede editar, anular ni eliminar pagos. |
 | **Supervisor** | Limitado a una o varias estaciones asignadas | Puede cancelar Facturas de Anticipo y aplicaciones, modificar importes de despachos pendientes y anular pagos; no puede registrar pagos o anticipos ni administrar usuarios. |
 | **Consulta** | Global o por estación | Solo lectura: Visualización de indicadores, reportes, fichas y exportación de tablas a formato CSV. |
 
 Al crear o editar usuarios, marca **Acceso a todas las estaciones** para incluir las estaciones futuras, o desmárcala para seleccionar estaciones específicas desde el desplegable dinámico. Usa **Seleccionar todas** para elegir rápidamente todas las estaciones actuales. Debe seleccionarse al menos una estación en el modo específico. Las asignaciones se guardan en `usuario_estaciones`, con referencias a usuarios y estaciones.
+
+El nombre visible **Gestor de Cartera** conserva la clave `gestor` en `usuarios.rol`, por lo que no se requiere migrar ni reescribir las cuentas existentes.
 
 ---
 

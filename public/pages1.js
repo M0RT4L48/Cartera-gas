@@ -10,7 +10,7 @@
   const facDefault = () => ({ q: '', estado: 'abiertas', rango: '', campo: 'factura', anio: '', mes: '', desde: '', hasta: '', sort: 'saldo', dir: 'desc', page: 1, k: '' });
   CG.routes.cartera = async (args, query, keep) => {
     let clientes = [];
-    if (can('facturas')) {
+    if (can('facturas') || can('facturas_crear')) {
       try { clientes = await CG.clientesLista(false); } catch (e) { return errorView(e); }
     }
     const clientePick = clientePicker('fact-cliente', clientes, { placeholder: 'Escribe para buscar cliente…' });
@@ -32,7 +32,7 @@
             <tbody>${r.rows.length ? r.rows.map((f) => html`<tr class="click" data-act="factura" data-k="${f.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">
               <td class="wrap">${f.cliente}</td><td>${corto(f.estacion)}</td><td>${f.no_factura}</td><td>${fdate(f.fecha_factura)}</td><td>${fdate(f.fecha_vencimiento)}</td>
               <td class="n">${f.saldo > 0.005 ? diasCell(f.dias_vencido) : ''}</td><td>${badge(f.estado)}</td><td class="n">${money(f.importe)}</td><td class="n strong">${money(f.saldo)}</td>
-              <td>${can('pagos') && f.saldo > 0.005 ? html`<button class="btn small" data-act="pago" data-k="${f.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">Pago</button>` : ''}
+              <td>${(can('pagos') || can('pagos_crear')) && f.saldo > 0.005 ? html`<button class="btn small" data-act="pago" data-k="${f.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">Pago</button>` : ''}
                 ${can('facturas') && f.puede_anular_despachos ? html`<button class="btn small danger" data-act="anularDespachosFactura" data-k="${f.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">Anular</button>` : ''}</td></tr>`)
               : html`<tr><td colspan="10" class="empty">No hay facturas con estos filtros.</td></tr>`}</tbody>
             <tfoot><tr><td colspan="7">Totales de la selección</td><td class="n">${money(r.suma_importe)}</td><td class="n">${money(r.suma_saldo)}</td><td></td></tr></tfoot></table></div>
@@ -41,7 +41,7 @@
     };
     setView(html`
       <div class="h"><h2>Cuentas por Cobrar</h2><p>Listado de facturas por cobrar al ${fdate(S.corte)}. Haz clic en un rango de antigüedad para filtrarlo.</p></div>
-      ${can('facturas') ? html`<form id="formNuevaFactura" class="formcard" style="margin-bottom:20px">
+      ${can('facturas') || can('facturas_crear') ? html`<form id="formNuevaFactura" class="formcard" style="margin-bottom:20px">
         <h3>Registrar factura o saldo nuevo</h3>
         <div class="grid g3">
           <label>Cliente${clientePick.html}</label>
@@ -146,7 +146,7 @@
           <button class="btn" data-act="editarFactura" data-id="${f.app_id}">Editar factura capturada</button></div>` : ''}
         ${can('facturas') && f.puede_anular_despachos ? html`<div style="margin-bottom:12px">
           <button class="btn danger" data-act="anularDespachosFactura" data-k="${f.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">Anular factura y restaurar despachos</button></div>` : ''}
-        ${can('pagos') && f.saldo > 0.005 ? html`<div style="margin-bottom:12px"><button class="btn accent" data-act="pago" data-k="${f.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">Registrar pago</button>
+        ${(can('pagos') || can('pagos_crear')) && f.saldo > 0.005 ? html`<div style="margin-bottom:12px"><button class="btn accent" data-act="pago" data-k="${f.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">Registrar pago</button>
           <a class="btn" href="#/pagos?k=${encodeURIComponent(f.k_cliente)}" data-act="cerrar">Aplicar un cargo a varias facturas (FIFO)</a></div>` : ''}
         <h3 style="font-size:14px;margin:6px 0">Pagos capturados en la aplicación</h3>
         ${d.pagos.length ? html`<div class="tablewrap nomax"><table><thead><tr><th>Fecha</th><th>Método</th><th>Banco</th><th>Referencia</th><th class="n">Monto</th><th>Registró</th><th></th><th></th></tr></thead><tbody>
@@ -425,7 +425,7 @@
       abiertas: () => d.abiertas.length ? html`<div class="tablewrap nomax"><table><thead><tr><th>Factura</th><th>F. factura</th><th>Vencimiento</th><th class="n">Días</th><th>Estado</th><th class="n">Importe</th><th class="n">Saldo</th><th></th></tr></thead><tbody>
         ${d.abiertas.map((f) => html`<tr class="click" data-act="factura" data-k="${c.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}"><td>${f.no_factura}</td><td>${fdate(f.fecha_factura)}</td><td>${fdate(f.fecha_vencimiento)}</td>
           <td class="n">${diasCell(f.dias_vencido)}</td><td>${badge(f.estado)}</td><td class="n">${money(f.importe)}</td><td class="n strong">${money(f.saldo)}</td>
-          <td>${can('pagos') ? html`<button class="btn small" data-act="pago" data-k="${c.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">Pago</button>` : ''}
+          <td>${(can('pagos') || can('pagos_crear')) ? html`<button class="btn small" data-act="pago" data-k="${c.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">Pago</button>` : ''}
             ${can('facturas') && f.puede_anular_despachos ? html`<button class="btn small danger" data-act="anularDespachosFactura" data-k="${c.k_cliente}" data-est="${f.estacion_id}" data-no="${f.no_factura}">Anular</button>` : ''}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">Sin facturas abiertas.</div>`,
       porfacturar: () => d.por_facturar.length ? html`<div class="tablewrap nomax"><table><thead><tr><th>Fecha despacho</th><th>Despacho</th><th>Producto</th><th>Grupo</th><th class="n">Días</th><th class="n">Importe</th></tr></thead><tbody>
         ${d.por_facturar.map((x) => html`<tr><td>${fdate(x.fecha_despacho)}</td><td>${x.despacho}</td><td>${x.producto || ''}</td><td>${x.grupo}</td><td class="n">${x.dias}</td><td class="n">${money(x.importe - x.abono, 2)}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">Sin despachos por facturar.</div>`,

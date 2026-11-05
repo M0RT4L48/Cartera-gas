@@ -69,6 +69,7 @@ function csv(res, nombre, cols, rows) {
   send(res, 200, Buffer.from(body, 'utf8'), { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${nombre}"` });
 }
 const exigir = (user, permiso) => { if (!can(user, permiso)) throw new HttpError(403, 'No tienes permiso para esta acción'); };
+const exigirAlguno = (user, ...permisos) => { if (!permisos.some((permiso) => can(user, permiso))) throw new HttpError(403, 'No tienes permiso para esta acción'); };
 const txt = (v, max = 300) => (v == null ? '' : String(v).trim().slice(0, max));
 const modosCargaCliente = ['Vales débito', 'Vales crédito', 'Flotilla débito', 'Flotilla crédito', 'Código de barras', 'Firma autorizada', 'Cupón de carga'];
 const modosCargaAnteriores = {
@@ -684,7 +685,7 @@ async function api(req, res, url) {
   }
 
   if (m === 'POST' && p === '/api/por-facturar') {
-    exigir(user, 'facturas');
+    exigirAlguno(user, 'facturas', 'despachos_crear');
     const b = await readBody(req);
     const cliente = await verificaCliente(user, txt(b.k_cliente, 200));
     const fechaDespacho = txt(b.fecha_despacho, 10) || L.hoyISO();
@@ -708,7 +709,7 @@ async function api(req, res, url) {
 
   // ----- pagos CxC -----
   if (m === 'POST' && (p === '/api/pagos' || p === '/api/pagos/lote')) {
-    exigir(user, 'pagos');
+    exigirAlguno(user, 'pagos', 'pagos_crear');
     const b = await readBody(req);
     await verificaCliente(user, b.k_cliente);
     if (!L.esFecha(b.fecha)) throw new HttpError(400, 'Fecha inválida');
@@ -882,7 +883,7 @@ async function api(req, res, url) {
   }
 
   if (m === 'POST' && p === '/api/cartera/facturas') {
-    exigir(user, 'facturas');
+    exigirAlguno(user, 'facturas', 'facturas_crear');
     const b = await readBody(req);
     const cliente = await verificaCliente(user, txt(b.k_cliente, 200));
     const noFactura = txt(b.no_factura, 80);
@@ -1209,6 +1210,9 @@ async function api(req, res, url) {
   }
 
   // El módulo anterior se conserva solo como histórico; no acepta nuevos movimientos.
+  if (m === 'DELETE' && /^\/api\/debito\/movimientos\/\d+$/.test(p) && ['capturista', 'pagos'].includes(user.rol)) {
+    throw new HttpError(403, 'Este rol solo puede registrar movimientos y no puede anularlos');
+  }
   if ((m === 'POST' || m === 'DELETE') && (p === '/api/debito/movimientos' || /^\/api\/debito\/movimientos\/\d+$/.test(p))) {
     throw new HttpError(410, 'Prepago fue reemplazado por Facturas de Anticipo y Aplicaciones de Anticipo');
   }

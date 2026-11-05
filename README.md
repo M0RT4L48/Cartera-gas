@@ -112,11 +112,19 @@ Tablas de la aplicación: `usuarios`, `sesiones`, `pagos`, `debito_app`, `fact_c
 | Rol | Permisos |
 |---|---|
 | Administrador General | Todo: usuarios, bitácora y carga de Excel incluidos |
-| Gestor de Estación | Consultar/exportar, registrar y aplicar anticipos, pagos, facturas, gestiones, altas de clientes y edición de crédito en su estación |
+| Gestor de Cartera | Consultar/exportar, registrar y aplicar anticipos, pagos, facturas, gestiones, altas de clientes y edición de crédito en su estación |
+| Capturista | Registrar despachos/consumos por facturar y emitir facturas; sin permisos para editar, modificar, anular ni eliminar despachos o facturas |
+| Pagos | Registrar pagos únicamente; sin permisos para editar, anular ni eliminar pagos |
 | Consulta | Solo lectura y exportación |
 
 Cada usuario puede tener **una o varias estaciones asignadas** (se valida en el servidor). Contraseñas con scrypt, cambio obligatorio
 en el primer acceso, bloqueo de 15 min tras 5 intentos fallidos, cookie HttpOnly/SameSite y bitácora de acciones.
+
+El nombre visible **Gestor de Cartera** conserva la clave `gestor` en `usuarios.rol`; por tanto, no requiere migrar ni reescribir usuarios o relaciones. Para verificar cuántas cuentas existentes conservan el rol:
+
+```sql
+SELECT COUNT(*) AS usuarios_gestor FROM usuarios WHERE rol = 'gestor';
+```
 
 ## Actualizar datos
 

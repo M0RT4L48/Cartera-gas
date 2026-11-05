@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
   usuario         TEXT NOT NULL UNIQUE COLLATE NOCASE,
   nombre          TEXT NOT NULL,
   email           TEXT,
-  rol             TEXT NOT NULL DEFAULT 'consulta',   -- admin | gestor | supervisor | consulta
+  rol             TEXT NOT NULL DEFAULT 'consulta',   -- admin | gestor | supervisor | capturista | pagos | consulta
   estacion_id     INTEGER,                            -- Estación heredada/primera asignada; el alcance se calcula con usuario_estaciones
   activo          INTEGER NOT NULL DEFAULT 1,
   must_change     INTEGER NOT NULL DEFAULT 1,

@@ -138,6 +138,69 @@ server.listen(0, '127.0.0.1', async () => {
   const cliPagos = (await call('a', 'GET', '/api/clientes?corte=2026-10-13&filtro=vencido&size=200')).data.rows.find((c) => c.n_fact >= 3 && c.saldo_fact < 1e6);
   const detalle = async () => (await call('a', 'GET', '/api/cliente?corte=2026-10-13&k=' + enc(cliPagos.k_cliente))).data;
   let facs;
+  await t('roles Capturista y Pagos: altas permitidas, cambios y anulaciones rechazados', async () => {
+    const clave = 'RolesPrueba2026';
+    const nombreCapturista = `capturista${process.pid}`;
+    const nombrePagos = `pagos${process.pid}`;
+    const estacionId = (await L.q.get('SELECT estacion_id FROM dim_cliente WHERE k_cliente=?', cliPagos.k_cliente)).estacion_id;
+    await L.q.run(`INSERT INTO usuarios(usuario,nombre,rol,estacion_id,activo,must_change,pass_hash)
+      VALUES (?,?,'capturista',?,1,0,?)`, nombreCapturista, 'Capturista prueba', estacionId, L.hashPassword(clave));
+    await L.q.run(`INSERT INTO usuarios(usuario,nombre,rol,estacion_id,activo,must_change,pass_hash)
+      VALUES (?,?,'pagos',?,1,0,?)`, nombrePagos, 'Pagos prueba', estacionId, L.hashPassword(clave));
+    const idsLimpieza = { despacho: null, factura: null, pago: null };
+    try {
+      assert.equal(L.ROLES.gestor.etiqueta, 'Gestor de Cartera');
+      assert.ok(L.ROLES.capturista.permisos.includes('despachos_crear'));
+      assert.ok(L.ROLES.capturista.permisos.includes('facturas_crear'));
+      assert.ok(!L.ROLES.capturista.permisos.includes('facturas'));
+      assert.ok(L.ROLES.pagos.permisos.includes('pagos_crear'));
+      assert.ok(!L.ROLES.pagos.permisos.includes('pagos') && !L.ROLES.pagos.permisos.includes('anular_pago'));
+      assert.equal((await call('capturista', 'POST', '/api/login', { usuario: nombreCapturista, password: clave })).status, 200);
+      assert.equal((await call('pagos', 'POST', '/api/login', { usuario: nombrePagos, password: clave })).status, 200);
+
+      const despacho = await call('capturista', 'POST', '/api/por-facturar', {
+        k_cliente: cliPagos.k_cliente, importe: 23, fecha_despacho: L.hoyISO(), despacho: `CAP-DESP-${process.pid}`,
+      });
+      assert.equal(despacho.status, 201, JSON.stringify(despacho.data));
+      idsLimpieza.despacho = despacho.data.id;
+      const factura = await call('capturista', 'POST', '/api/cartera/facturas', {
+        k_cliente: cliPagos.k_cliente, no_factura: `CAP-FACT-${process.pid}`, importe: 24, fecha_factura: L.hoyISO(),
+      });
+      assert.equal(factura.status, 201, JSON.stringify(factura.data));
+      idsLimpieza.factura = factura.data.id;
+      assert.equal((await call('capturista', 'PUT', `/api/por-facturar/${despacho.data.id}`, {
+        fecha_despacho: L.hoyISO(), monto: 23,
+      })).status, 403);
+      assert.equal((await call('capturista', 'PUT', `/api/cartera/facturas/${factura.data.id}`, {
+        no_factura: `CAP-FACT-EDIT-${process.pid}`, fecha_factura: L.hoyISO(), importe: 24,
+      })).status, 403);
+      assert.equal((await call('capturista', 'POST', '/api/cartera/facturas/anular-despachos', {
+        k_cliente: cliPagos.k_cliente, estacion_id: estacionId, no_factura: 'FACTURA-CAPTURISTA',
+      })).status, 403);
+      assert.equal((await call('capturista', 'DELETE', '/api/debito/movimientos/1000000001')).status, 403);
+      assert.equal((await call('capturista', 'DELETE', '/api/pagos/1')).status, 403);
+
+      facs = (await detalle()).abiertas;
+      const abierta = facs.find((item) => item.saldo > 1);
+      assert.ok(abierta, 'Se requiere una factura abierta para probar el alta de pago');
+      const pago = await call('pagos', 'POST', '/api/pagos', {
+        k_cliente: cliPagos.k_cliente, estacion_id: abierta.estacion_id, no_factura: abierta.no_factura,
+        monto: 1, fecha: L.hoyISO(), metodo: 'Efectivo',
+      });
+      assert.equal(pago.status, 201, JSON.stringify(pago.data));
+      idsLimpieza.pago = pago.data.ids[0];
+      assert.equal((await call('pagos', 'DELETE', `/api/pagos/${idsLimpieza.pago}`)).status, 403);
+      assert.equal((await call('pagos', 'DELETE', '/api/debito/movimientos/1000000001')).status, 403);
+      assert.equal((await call('pagos', 'POST', '/api/cartera/facturas/anular-despachos', {
+        k_cliente: cliPagos.k_cliente, estacion_id: estacionId, no_factura: 'FACTURA-PAGOS',
+      })).status, 403);
+    } finally {
+      if (idsLimpieza.pago) await L.q.run('DELETE FROM pagos WHERE id=?', idsLimpieza.pago);
+      if (idsLimpieza.factura) await L.q.run('DELETE FROM fact_cxc_app WHERE id=?', idsLimpieza.factura);
+      if (idsLimpieza.despacho) await L.q.run('DELETE FROM fact_cxc_app WHERE id=?', idsLimpieza.despacho);
+      await L.q.run('DELETE FROM usuarios WHERE usuario IN (?,?)', nombreCapturista, nombrePagos);
+    }
+  });
   await t('pago individual reduce saldo y KPI; anular lo restablece', async () => {
     facs = (await detalle()).abiertas; const f = facs[0];
     const saldoFavorAntes = (await detalle()).cliente.saldo_favor;

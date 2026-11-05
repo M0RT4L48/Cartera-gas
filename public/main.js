@@ -8,7 +8,7 @@
     { id: 'cartera', label: 'Cartera', perm: 'ver' },
     { id: 'facturas-anticipo', label: 'Facturas de Anticipo', perm: 'anticipos_ver' },
     { id: 'aplicaciones-anticipo', label: 'Aplicación de Anticipos', perm: 'aplicaciones_anticipo_ver' },
-    { id: 'pagos', label: 'Pagos', perm: 'pagos' },
+    { id: 'pagos', label: 'Pagos', perms: ['pagos', 'pagos_crear'] },
     { id: 'por-facturar', label: 'Despachos', perm: 'ver' },
     { id: 'cobranza', label: 'Cobranza', perm: 'ver' },
     { id: 'catalogos', label: 'Catálogos', perm: 'ver' },
@@ -21,7 +21,7 @@
 
   function renderNav() {
     const act = ALIAS[current] || current;
-    $('#tabs').innerHTML = NAV.filter((n) => can(n.perm)).map((n) =>
+    $('#tabs').innerHTML = NAV.filter((n) => (n.perms || [n.perm]).some(can)).map((n) =>
       `<a href="#/${n.id}" class="${act === n.id ? 'on' : ''}">${n.label}${n.badge && S.alertCount ? `<span class="cnt">${S.alertCount}</span>` : ''}</a>`).join('');
   }
   function parseHash() {
