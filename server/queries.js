@@ -427,9 +427,17 @@ async function clienteDetalle({ corte, k }) {
       CASE WHEN EXISTS (SELECT 1 FROM debito_app d WHERE d.k_cliente=p.k_cliente AND d.folio='REVERSA-PAGO-'||p.id) THEN 1 ELSE 0 END prepago_devuelto,
       u.nombre usuario
     FROM pagos p LEFT JOIN usuarios u ON u.id=p.usuario_id LEFT JOIN bancos b ON b.id=p.banco_id
-    WHERE p.k_cliente=? ORDER BY p.id DESC LIMIT 100`, k);
-  const hist = (await q.all(`SELECT substr(fecha_factura,1,7) mes, SUM(importe) facturado, SUM(abono) cobrado FROM v_cxc
-    WHERE k_cliente=? AND no_factura IS NOT NULL AND estatus<>'POR FACTURAR' AND fecha_factura IS NOT NULL GROUP BY 1 ORDER BY 1 DESC LIMIT 12`, k)).reverse();
+    WHERE p.k_cliente=? ORDER BY p.id DESC LIMIT 500`, k);
+  const hist = (await q.all(`SELECT mes, SUM(facturado) facturado, SUM(cobrado) cobrado FROM (
+      SELECT substr(fecha_factura,1,7) mes, SUM(importe) facturado, SUM(abono) cobrado FROM v_cxc
+        WHERE k_cliente=? AND no_factura IS NOT NULL AND estatus<>'POR FACTURAR' AND fecha_factura IS NOT NULL GROUP BY 1
+      UNION ALL
+      SELECT substr(fecha,1,7), 0, SUM(monto) FROM pagos
+        WHERE k_cliente=? AND anulado=0 AND conciliado=0 AND sin_aplicar=0 GROUP BY 1
+      UNION ALL
+      SELECT substr(fecha_aplicacion,1,7), 0, SUM(importe_aplicado) FROM aplicaciones_factura_anticipo
+        WHERE k_cliente=? AND estado='APLICADA' GROUP BY 1
+    ) movimientos GROUP BY mes ORDER BY mes DESC LIMIT 12`, k, k, k)).reverse();
   return {
     cliente: { ...c, credito_actualizado_por: cred.actualizado_por, credito_actualizado: cred.actualizado },
     aging: RANGOS.map((r) => ({ rango: r, monto: am[r] || 0 })),

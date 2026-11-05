@@ -156,6 +156,37 @@ server.listen(0, '127.0.0.1', async () => {
     assert.ok(!(await call('a', 'GET', '/api/metodos-pago')).data.rows.some((m) => m.id === metodoPagoId));
     assert.ok((await call('a', 'GET', '/api/pagos')).data.rows.some((p) => p.metodo === metodoPagoPrueba));
   });
+  await t('perfil del cliente: muestra pagos capturados antiguos y los suma al historial', async () => {
+    const factura = facs.find((f) => f.saldo >= 950);
+    assert.ok(factura, 'Se requiere una factura abierta con saldo suficiente');
+    const pago = await L.q.run(`INSERT INTO pagos
+      (k_cliente,estacion_id,no_factura,fecha,monto,metodo,referencia,usuario_id,sin_aplicar)
+      VALUES (?,?,?,?,?,?,?,?,0)`,
+    cliPagos.k_cliente, factura.estacion_id, factura.no_factura, '2026-11-05', 950, 'Efectivo', 'COFI-950-TEST', 1);
+    const pagoId = pago.lastInsertRowid;
+    const pagosPosteriores = [];
+    try {
+      for (let i = 0; i < 100; i++) {
+        const r = await L.q.run(`INSERT INTO pagos
+          (k_cliente,estacion_id,no_factura,fecha,monto,metodo,referencia,usuario_id,anulado,sin_aplicar)
+          VALUES (?,?,?,?,?,?,?,?,1,1)`,
+        cliPagos.k_cliente, factura.estacion_id, factura.no_factura, '2026-11-05', 1, 'Efectivo', `HISTORIAL-TEST-${i}`, 1);
+        pagosPosteriores.push(r.lastInsertRowid);
+      }
+      const perfil = await call('a', 'GET', '/api/cliente?k=' + enc(cliPagos.k_cliente));
+      assert.equal(perfil.status, 200, JSON.stringify(perfil.data));
+      assert.ok(perfil.data.pagos.some((p) => p.id === pagoId && p.monto === 950 && p.referencia === 'COFI-950-TEST'));
+      const historialNoviembre = perfil.data.historial.find((h) => h.mes === '2026-11');
+      assert.ok(historialNoviembre && historialNoviembre.cobrado >= 950,
+        JSON.stringify(perfil.data.historial));
+      assert.ok(perfil.data.pagos.length >= 101, `Se recibieron solo ${perfil.data.pagos.length} pagos`);
+    } finally {
+      await L.q.run('DELETE FROM pagos WHERE id=?', pagoId);
+      if (pagosPosteriores.length) {
+        await L.q.run(`DELETE FROM pagos WHERE id IN (${pagosPosteriores.map(() => '?').join(',')})`, ...pagosPosteriores);
+      }
+    }
+  });
   await t('pagos: validaciones (excedente, fecha futura, vacío, duplicado)', async () => {
     const f = facs[0]; const b = { k_cliente: cliPagos.k_cliente, fecha: '2026-10-20', metodo: 'Efectivo' };
     const deudaActual = (await detalle()).abiertas.reduce((sum, factura) => sum + factura.saldo, 0);
