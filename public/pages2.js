@@ -614,7 +614,11 @@
         renderDespacho(fila, despacho);
         return;
       }
-      const [fecha, nombre, producto, grupo, monto] = [...fila.cells].slice(1, 6).map((cell) => cell.querySelector('input, select').value);
+      const fecha = fila.cells[1].querySelector('input')?.value;
+      const nombre = fila.cells[2].querySelector('input')?.value;
+      const producto = fila.cells[3].querySelector('select')?.value || '';
+      const grupo = fila.cells[4].querySelector('input')?.value;
+      const monto = fila.cells[5].querySelector('input')?.value;
       if (!fecha || !monto || Number(monto) <= 0) { toast('Completa una fecha válida y un pendiente mayor a cero.', 'bad'); return; }
       boton.disabled = true;
       try {
@@ -627,6 +631,10 @@
         updateTotal();
         toast('Despacho actualizado.');
       } catch (error) {
+        const errorEdicion = document.createElement('span');
+        errorEdicion.className = 'err';
+        errorEdicion.textContent = error.message;
+        fila.cells[6].append(errorEdicion);
         toast(error.message, 'bad');
         boton.disabled = false;
       }
