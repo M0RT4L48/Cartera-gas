@@ -151,8 +151,8 @@
             <td>${p.anulado ? badge('Cerrada') : p.conciliado ? html`<span class="badge b-mut">Conciliado</span>` : (can('pagos') || can('anular_pago')) ? html`<button class="btn small danger" data-act="anularPago" data-id="${p.id}">Anular</button>` : ''}</td>
             <td>${p.anulado && p.desde_prepago && !p.prepago_devuelto && (can('pagos') || can('anular_pago')) ? html`<button class="btn small" data-act="anularPago" data-reparar="1" data-id="${p.id}">Reparar prepago</button>` : ''}</td></tr>`)}</tbody></table></div>` : html`<div class="mut">Sin pagos capturados.</div>`}
         <h3 style="font-size:14px;margin:14px 0 6px">Despachos incluidos (${d.despachos.length})</h3>
-        <div class="tablewrap" style="max-height:300px"><table><thead><tr><th>Fecha</th><th>Despacho</th><th>Grupo</th><th>Estatus</th><th class="n">Importe</th><th class="n">Abono</th><th>Fecha pago</th></tr></thead><tbody>
-          ${d.despachos.map((x) => html`<tr><td>${fdate(x.fecha_despacho)}</td><td>${x.despacho}</td><td>${x.grupo}</td><td>${x.estatus}</td><td class="n">${money(x.importe, 2)}</td><td class="n">${money(x.abono, 2)}</td><td>${fdate(x.fecha_pago)}</td></tr>`)}</tbody></table></div>
+        <div class="tablewrap" style="max-height:300px"><table><thead><tr><th>Fecha</th><th>Despacho</th><th>Producto</th><th>Grupo</th><th>Estatus</th><th class="n">Importe</th><th class="n">Abono</th><th>Fecha pago</th></tr></thead><tbody>
+          ${d.despachos.map((x) => html`<tr><td>${fdate(x.fecha_despacho)}</td><td>${x.despacho}</td><td>${x.producto || ''}</td><td>${x.grupo}</td><td>${x.estatus}</td><td class="n">${money(x.importe, 2)}</td><td class="n">${money(x.abono, 2)}</td><td>${fdate(x.fecha_pago)}</td></tr>`)}</tbody></table></div>
         <div class="actions"><button class="btn" data-act="cerrar">Cerrar</button></div>`, { wide: true });
     } catch (e) { toast(e.message, true); }
   };

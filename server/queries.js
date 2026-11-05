@@ -230,7 +230,7 @@ async function facturaDetalle({ corte, k, est, no }) {
     FROM ${FAC(corte)} f JOIN dim_cliente c ON c.k_cliente=f.k_cliente JOIN dim_estacion e ON e.id=f.estacion_id
     WHERE f.k_cliente=? AND f.estacion_id=? AND f.no_factura=?`, k, est, no);
   if (!f) throw new HttpError(404, 'Factura no encontrada');
-  const despachos = await q.all(`SELECT f.id, f.fecha_despacho, f.despacho, f.importe, f.abono, f.estatus, f.grupo, f.fecha_pago,
+  const despachos = await q.all(`SELECT f.id, f.fecha_despacho, f.despacho, f.producto, f.importe, f.abono, f.estatus, f.grupo, f.fecha_pago,
       CASE WHEN f.fecha_factura IS NOT NULL
         THEN date(f.fecha_factura, printf('%+d days', COALESCE(cr.dias,0)))
         ELSE f.fecha_vencimiento END AS fecha_vencimiento

@@ -736,7 +736,7 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal(listaPendientes.data.rows[0].despachos, 2);
     assert.equal(listaPendientes.data.rows[0].items.length, 2);
     const despachoEditar = listaPendientes.data.rows[0].items.find((item) => item.origen === 'app' && item.despacho === 'DESPACHO-1');
-    const cambiosDespacho = { fecha_despacho: '2026-10-24', despacho: 'DESPACHO-EDITADO', grupo: 'GRUPO-EDITADO', monto: 95.25 };
+    const cambiosDespacho = { fecha_despacho: '2026-10-24', despacho: 'DESPACHO-EDITADO', producto: 'Gas LP', grupo: 'GRUPO-EDITADO', monto: 95.25 };
     assert.equal((await call('l', 'PUT', '/api/por-facturar/' + despachoEditar.id, cambiosDespacho)).status, 403);
     assert.equal((await call('a', 'PUT', '/api/por-facturar/' + despachoEditar.id, {
       ...cambiosDespacho, despacho: 'DESPACHO-2',
@@ -750,6 +750,7 @@ server.listen(0, '127.0.0.1', async () => {
     const despachoEditado = listaEditada.data.rows[0].items.find((item) => item.id === despachoEditar.id);
     assert.equal(despachoEditado.fecha_despacho, cambiosDespacho.fecha_despacho);
     assert.equal(despachoEditado.despacho, cambiosDespacho.despacho);
+    assert.equal(despachoEditado.producto, cambiosDespacho.producto);
     assert.equal(despachoEditado.grupo, cambiosDespacho.grupo);
     assert.equal(despachoEditado.monto, cambiosDespacho.monto);
     const idDespachoExcel = 1900000000 + (process.pid % 10000000);
@@ -777,6 +778,11 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal(despachoFacturado.status, 201, JSON.stringify(despachoFacturado.data));
     assert.equal(despachoFacturado.data.importe, 95.25);
     assert.equal(despachoFacturado.data.actualizados, 1);
+    const detalleFacturaProducto = await call('a', 'GET', '/api/factura?' + new URLSearchParams({
+      k: altaCliente.data.k_cliente, est: '1', no: 'FACTURA-SELECCION',
+    }));
+    assert.equal(detalleFacturaProducto.status, 200, JSON.stringify(detalleFacturaProducto.data));
+    assert.equal(detalleFacturaProducto.data.despachos[0].producto, 'Gas LP');
     const restante = await call('a', 'GET', '/api/por-facturar?k=' + enc(altaCliente.data.k_cliente));
     assert.equal(restante.data.rows[0].despachos, 1);
     assert.equal(restante.data.rows[0].monto, 120);
