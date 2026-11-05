@@ -557,6 +557,7 @@
           ${puedeFacturar ? html`<tfoot><tr><td colspan="5">Total seleccionado</td><td class="n strong" id="totalSeleccionado"></td><td></td></tr></tfoot>` : ''}</table></div>
         ${puedeFacturar ? html`<div class="full">
           <h3>Facturas emitidas desde despachos pendientes</h3>
+          <p class="mut">Solo se muestran facturas emitidas después de esta actualización; las anteriores no guardaron los datos necesarios para restaurar exactamente sus despachos.</p>
           <div class="tablewrap nomax"><table><thead><tr><th>Factura</th><th>Fecha</th><th>Despachos</th><th class="n">Importe</th><th></th></tr></thead><tbody id="facturasDespachosAnular">
             ${facturasAnulables.length ? facturasAnulables.map((factura) => html`<tr>
               <td>${factura.no_factura}</td><td>${fdate(factura.fecha_factura)}</td><td>${factura.despachos}</td><td class="n">${money(factura.importe, 2)}</td>
