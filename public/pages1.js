@@ -357,8 +357,8 @@
       try {
         const r = await api('/api/clientes?' + qs(gp({ ...st })));
         $('#tbl').innerHTML = html`
-          <div class="tablewrap"><table><thead><tr>${thSort('No. cliente', 'no', st)}${thSort('Nombre', 'cliente', st)}<th>Estación</th><th>Correo electrónico</th><th>Teléfono</th><th>Modo de carga</th>${thSort('Límite crédito', 'limite', st, 'n')}<th class="n">Días crédito</th>
-            ${thSort('Saldo CxC', 'saldo', st, 'n')}${thSort('Vencido', 'vencido', st, 'n')}${thSort('Uso del límite', 'uso', st)}${thSort('Saldo prepago (Débito)', 'favor', st, 'n')}<th>Riesgo</th><th></th></tr></thead>
+          <div class="tablewrap"><table><thead><tr>${thSort('No. cliente', 'no', st)}${thSort('Nombre', 'cliente', st)}${thSort('Estación', 'estacion', st)}${thSort('Correo electrónico', 'email', st)}${thSort('Teléfono', 'telefono', st)}${thSort('Modo de carga', 'modo_carga', st)}${thSort('Límite crédito', 'limite', st, 'n')}
+            ${thSort('Días crédito', 'dias_credito', st, 'n')}${thSort('Saldo CxC', 'saldo', st, 'n')}${thSort('Vencido', 'vencido', st, 'n')}${thSort('Uso del límite', 'uso', st)}${thSort('Saldo prepago (Débito)', 'favor', st, 'n')}${thSort('Riesgo', 'riesgo', st)}<th></th></tr></thead>
             <tbody>${r.rows.length ? r.rows.map((c) => html`<tr class="click" data-go="#/cliente/${encodeURIComponent(c.k_cliente)}"><td class="mut">${c.no_cliente || 'N/A'}</td>
               <td class="wrap"><b>${c.cliente}</b>${c.rfc ? html`<br><small class="mut">RFC: ${c.rfc}</small>` : ''}</td><td>${corto(c.estacion)}</td>
               <td class="wrap">${c.email || ''}</td><td>${c.telefono || ''}</td><td>${c.modo_carga || ''}</td>

@@ -263,8 +263,12 @@ async function facturaDetalle({ corte, k, est, no }) {
 }
 
 // ---------------- Clientes ----------------
-const ORDEN_CLI = { saldo: 'x.saldo_total', vencido: 'x.vencido', cliente: 'x.cliente', limite: 'x.limite', dias: 'x.max_dias',
-  favor: 'x.saldo_favor', uso: '(CASE WHEN x.limite>0 THEN x.saldo_total/x.limite END)', por_facturar: 'x.por_facturar', no: 'x.no_cliente' };
+const ORDEN_CLI = {
+  saldo: 'x.saldo_total', vencido: 'x.vencido', cliente: 'x.cliente', limite: 'x.limite', dias_credito: 'x.dias_credito',
+  favor: 'x.saldo_favor', uso: '(CASE WHEN x.limite>0 THEN x.saldo_total/x.limite END)', por_facturar: 'x.por_facturar',
+  no: 'x.no_cliente', estacion: 'x.estacion', email: 'x.email', telefono: 'x.telefono', modo_carga: 'x.modo_carga',
+  riesgo: RIESGO('x'),
+};
 async function clientes(p) {
   const wh = [], pr = [];
   filtrarEstaciones('x.estacion_id', p, wh, pr);

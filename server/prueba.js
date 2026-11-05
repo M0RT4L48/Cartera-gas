@@ -400,6 +400,11 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal(d.email, 'contacto@prueba.mx'); assert.equal(d.telefono, '555-1234'); assert.equal(d.modo_carga, 'Vales debito');
     const listaClienteModo = await call('a', 'GET', '/api/clientes?q=Cliente Prueba SA');
     assert.equal(listaClienteModo.data.rows[0].modo_carga, 'Vales debito');
+    for (const sort of ['no', 'cliente', 'estacion', 'email', 'telefono', 'modo_carga', 'limite', 'dias_credito', 'saldo', 'vencido', 'uso', 'favor', 'riesgo']) {
+      const ordenada = await call('a', 'GET', '/api/clientes?q=Cliente Prueba SA&sort=' + sort + '&dir=asc');
+      assert.equal(ordenada.status, 200, `No se pudo ordenar por ${sort}`);
+      assert.equal(ordenada.data.rows[0].k_cliente, r.data.k_cliente);
+    }
     assert.equal((await call('a', 'POST', '/api/clientes', {
       cliente: 'Modo de carga inválido', estacion_id: 1, modo_carga: 'Vale desconocido',
     })).status, 400);
