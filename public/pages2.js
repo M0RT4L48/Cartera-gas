@@ -885,9 +885,51 @@
     loading();
     try {
       const r = await api('/api/bitacora');
-      setView(html`<div class="crumb"><a href="#/usuarios">‹ Usuarios y Roles</a></div><div class="h"><h2>Bitácora de actividad</h2><p>Últimos 300 eventos (hora UTC).</p></div>
-        <div class="tablewrap"><table><thead><tr><th>Fecha (UTC)</th><th>Usuario</th><th>Acción</th><th>Detalle</th><th>IP</th></tr></thead><tbody>
-        ${r.rows.map((x) => html`<tr><td>${x.fecha}</td><td>${x.usuario}</td><td><span class="badge b-info">${x.accion}</span></td><td class="wrap">${x.detalle}</td><td>${x.ip}</td></tr>`)}</tbody></table></div>`);
+      const fechaUtcMs = (valor) => {
+        const fecha = String(valor || '').replace(' ', 'T');
+        const normalizada = /(?:Z|[+-]\d{2}:\d{2})$/i.test(fecha) ? fecha : `${fecha}Z`;
+        const ms = Date.parse(normalizada);
+        return Number.isNaN(ms) ? null : ms;
+      };
+      const fechaUtcMenosSeis = (valor) => {
+        const ms = fechaUtcMs(valor);
+        return ms == null ? valor || '' : new Date(ms - 6 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
+      };
+      let columnaOrden = 'fecha', direccionOrden = 'desc';
+      const columnas = [
+        ['fecha', 'Fecha (UTC-6)', 'date'],
+        ['usuario', 'Usuario', 'text'],
+        ['accion', 'Acción', 'text'],
+        ['detalle', 'Detalle', 'text'],
+        ['ip', 'IP', 'text'],
+      ];
+      const render = () => {
+        const filas = r.rows.slice().sort((a, b) => {
+          const columna = columnas.find(([key]) => key === columnaOrden);
+          const valorA = columna[2] === 'date' ? fechaUtcMs(a[columnaOrden]) : String(a[columnaOrden] || '');
+          const valorB = columna[2] === 'date' ? fechaUtcMs(b[columnaOrden]) : String(b[columnaOrden] || '');
+          const resultado = columna[2] === 'date'
+            ? (valorA ?? Number.NEGATIVE_INFINITY) - (valorB ?? Number.NEGATIVE_INFINITY)
+            : valorA.localeCompare(valorB, 'es', { numeric: true, sensitivity: 'base' });
+          return (direccionOrden === 'asc' ? resultado : -resultado) || Number(a.id) - Number(b.id);
+        });
+        const encabezadoOrden = (key, label) => html`<th><button type="button" class="btn small" data-sort-bitacora="${key}"
+          aria-sort="${columnaOrden === key ? (direccionOrden === 'asc' ? 'ascending' : 'descending') : 'none'}">
+          ${label}${columnaOrden === key ? (direccionOrden === 'asc' ? ' ↑' : ' ↓') : ''}
+        </button></th>`;
+        setView(html`<div class="crumb"><a href="#/usuarios">‹ Usuarios y Roles</a></div><div class="h"><h2>Bitácora de actividad</h2><p>Últimos 300 eventos. Las fechas se muestran en UTC-6; el registro original no se modifica.</p></div>
+          <div class="tablewrap"><table><thead><tr>${encabezadoOrden('fecha', 'Fecha (UTC-6)')}${encabezadoOrden('usuario', 'Usuario')}${encabezadoOrden('accion', 'Acción')}${encabezadoOrden('detalle', 'Detalle')}${encabezadoOrden('ip', 'IP')}</tr></thead><tbody>
+          ${filas.map((x) => html`<tr><td>${fechaUtcMenosSeis(x.fecha)}</td><td>${x.usuario}</td><td><span class="badge b-info">${x.accion}</span></td><td class="wrap">${x.detalle}</td><td>${x.ip}</td></tr>`)}</tbody></table></div>`);
+        $('#view').querySelector('thead').addEventListener('click', (event) => {
+          const boton = event.target.closest('[data-sort-bitacora]');
+          if (!boton) return;
+          const columna = boton.dataset.sortBitacora;
+          direccionOrden = columnaOrden === columna && direccionOrden === 'asc' ? 'desc' : 'asc';
+          columnaOrden = columna;
+          render();
+        });
+      };
+      render();
     } catch (e) { errorView(e); }
   };
 
