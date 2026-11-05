@@ -988,7 +988,7 @@
 
   // =============== COBRANZA ===============
   let cobTab = 'gestiones';
-  const tabsCob = () => html`<div class="subtabs"><button data-ct="gestiones" class="${cobTab === 'gestiones' ? 'on' : ''}">Gestiones y promesas</button><button data-ct="pagos" class="${cobTab === 'pagos' ? 'on' : ''}">Pagos capturados</button></div>`;
+  const tabsCob = () => html`<div class="subtabs"><button data-ct="gestiones" class="${cobTab === 'gestiones' ? 'on' : ''}">Gestiones y promesas</button><button data-ct="pagos" class="${cobTab === 'pagos' ? 'on' : ''}">Pagos capturados</button><button data-ct="anticipos" class="${cobTab === 'anticipos' ? 'on' : ''}">Aplicaciones de anticipo</button></div>`;
   CG.routes.cobranza = async () => {
     loading();
     try {
@@ -1000,13 +1000,22 @@
             <td>${x.promesa_fecha ? html`${fdate(x.promesa_fecha)} ${x.promesa_monto ? money(x.promesa_monto) : ''}` : ''}</td>
             <td>${can('gestiones') ? html`<select data-act-change="estadoGestion" data-id="${x.id}">${['Abierta', 'Cumplida', 'Incumplida', 'Cerrada'].map((s) => opt(s, s, x.estado))}</select>` : badge(x.estado)}</td>
             <td class="wrap">${x.notas}</td><td>${x.usuario}</td></tr>`) : html`<tr><td colspan="8" class="empty">Sin gestiones registradas.</td></tr>`}</tbody></table></div>`);
-      } else {
+      } else if (cobTab === 'pagos') {
         const p = await api('/api/pagos?' + qs({ estacion: S.est }));
         setView(html`<div class="h"><h2>Reporte de Cobranza</h2><p>Pagos capturados en la aplicación. Los cobros que aún no se asignan a factura aparecen como <b>Sin aplicar</b>. Al importar un Excel nuevo se marcan como <b>conciliados</b> (ya vienen incluidos en el archivo).</p></div>${tabsCob()}
           <div class="tablewrap"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Estación</th><th>Factura</th><th>Método</th><th>Banco</th><th>Referencia</th><th class="n">Monto</th><th>Registró</th><th>Estado</th><th></th></tr></thead><tbody>
           ${p.rows.length ? p.rows.map((x) => html`<tr><td>${fdate(x.fecha)}</td><td class="wrap"><a href="#/cliente/${encodeURIComponent(x.k_cliente)}">${x.cliente}</a></td><td>${corto(x.estacion)}</td><td>${x.sin_aplicar ? html`<span class="badge b-warn">Sin aplicar</span>` : x.no_factura}</td><td>${x.metodo}</td>
             <td>${x.banco || ''}</td><td>${x.referencia}</td><td class="n strong">${money(x.monto, 2)}</td><td>${x.usuario}</td><td>${x.anulado ? badge('Cerrada') : x.conciliado ? html`<span class="badge b-mut">Conciliado</span>` : x.sin_aplicar ? html`<span class="badge b-warn">Pendiente de asignar</span>` : html`<span class="badge b-ok">Aplicado</span>`}</td>
             <td>${!x.anulado && !x.conciliado && (can('pagos') || can('anular_pago')) ? html`<button class="btn small danger" data-act="anularPago" data-id="${x.id}">Anular pago</button>` : x.anulado && x.desde_prepago && !x.prepago_devuelto && !x.conciliado && (can('pagos') || can('anular_pago')) ? html`<button class="btn small" data-act="anularPago" data-reparar="1" data-id="${x.id}">Reparar prepago</button>` : ''}</td></tr>`) : html`<tr><td colspan="11" class="empty">Sin pagos capturados.</td></tr>`}</tbody></table></div>`);
+      } else {
+        const a = await api('/api/aplicaciones-anticipo?' + qs({ estacion: S.est, size: 200 }));
+        setView(html`<div class="h"><h2>Reporte de Cobranza</h2><p>Aplicaciones de Facturas de Anticipo a facturas de CxC. El historial incluye aplicaciones activas y canceladas.</p></div>${tabsCob()}
+          <div class="tablewrap"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Estación</th><th>Aplicación</th><th>Factura de Anticipo</th><th>Factura CxC</th><th>Referencia</th><th class="n">Importe</th><th>Estado</th><th>Usuario</th></tr></thead><tbody>
+          ${a.rows.length ? a.rows.map((x) => html`<tr><td>${fdate(x.fecha_aplicacion)}</td><td class="wrap"><a href="#/cliente/${encodeURIComponent(x.k_cliente)}">${x.cliente}</a></td><td>${corto(x.estacion)}</td>
+            <td>AP-${x.id}</td><td>${x.serie ? `${x.serie}-` : ''}${x.anticipo_folio}</td><td>${x.factura_folio}</td>
+            <td class="wrap">${x.estado === 'CANCELADA' ? x.motivo_cancelacion || x.referencia || '' : x.referencia || ''}</td>
+            <td class="n strong">${money(x.importe_aplicado, 2)} ${x.moneda}</td><td>${badge(x.estado)}</td><td>${x.usuario || '—'}</td></tr>`)
+            : html`<tr><td colspan="10" class="empty">Sin aplicaciones de anticipo en esta estación.</td></tr>`}</tbody></table></div>`);
       }
     } catch (e) { errorView(e); }
     $('#view').onclick = (e) => { const t = e.target.closest('[data-ct]'); if (t) { cobTab = t.dataset.ct; CG.routes.cobranza(); } };

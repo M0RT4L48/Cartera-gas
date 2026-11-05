@@ -264,10 +264,11 @@ async function facturaDetalle({ corte, k, est, no }) {
     FROM (SELECT ? k_cliente, ? estacion_id, ? no_factura) f`, k, est, no);
   f.puede_anular_despachos = Number(puedeAnular.puede_anular);
   f.aplicaciones_anticipo_historial = await q.all(`SELECT a.id, a.factura_anticipo_id, a.fecha_aplicacion, a.importe_aplicado,
-      a.estado, a.referencia, a.motivo_cancelacion, x.serie, x.folio, u.nombre usuario
+      a.estado, a.referencia, a.motivo_cancelacion, x.serie, x.folio,
+      COALESCE((SELECT nombre FROM usuarios WHERE usuario=a.created_by),
+        (SELECT nombre FROM usuarios WHERE CAST(id AS TEXT)=a.created_by), a.created_by, '') usuario
     FROM aplicaciones_factura_anticipo a
     JOIN facturas_anticipo x ON x.id=a.factura_anticipo_id
-    LEFT JOIN usuarios u ON u.id=a.created_by
     WHERE a.k_cliente=? AND a.estacion_id=? AND a.no_factura=?
     ORDER BY a.id DESC`, k, est, no);
   const despachos = await q.all(`SELECT f.id, f.fecha_despacho, f.despacho, f.producto, f.importe, f.abono, f.estatus, f.grupo, f.fecha_pago,
@@ -349,10 +350,14 @@ async function aplicacionesAnticipo(p) {
   const from = `FROM aplicaciones_factura_anticipo a
     JOIN dim_cliente c ON c.k_cliente=a.k_cliente
     JOIN facturas_anticipo f ON f.id=a.factura_anticipo_id
+    JOIN dim_estacion e ON e.id=a.estacion_id
     ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''}`;
   const page = entero(p.page, 1, 1, 100000), size = entero(p.size, 50, 10, 200);
   const tot = await q.get(`SELECT COUNT(*) n ${from}`, ...pr);
-  const rows = await q.all(`SELECT a.*, c.cliente, f.serie, f.folio anticipo_folio, a.no_factura factura_folio, a.created_by usuario
+  const rows = await q.all(`SELECT a.*, c.cliente, e.nombre estacion, f.serie, f.folio anticipo_folio,
+      a.no_factura factura_folio,
+      COALESCE((SELECT nombre FROM usuarios WHERE usuario=a.created_by),
+        (SELECT nombre FROM usuarios WHERE CAST(id AS TEXT)=a.created_by), a.created_by, '') usuario
     ${from} ORDER BY a.id DESC LIMIT ? OFFSET ?`, ...pr, size, (page - 1) * size);
   return { total: tot.n, page, size, rows };
 }
@@ -406,6 +411,15 @@ async function clienteDetalle({ corte, k }) {
   const debRes = await q.get(`SELECT COALESCE(SUM(abono),0) recargas, COALESCE(SUM(importe),0) consumos FROM v_debito WHERE k_cliente=?`, k);
   const anticipos = await q.all(`SELECT id, serie, folio, uuid_fiscal, fecha_factura, importe_original, importe_aplicado,
       saldo_disponible, moneda, tipo_cambio, estado FROM facturas_anticipo WHERE k_cliente=? ORDER BY fecha_factura DESC, id DESC`, k);
+  const aplicacionesAnticipo = await q.all(`SELECT a.id, a.factura_anticipo_id, a.estacion_id, a.no_factura,
+      a.fecha_aplicacion, a.importe_aplicado, a.moneda, a.estado, a.referencia, a.motivo_cancelacion,
+      a.fecha_cancelacion, f.serie, f.folio, e.nombre estacion,
+      COALESCE((SELECT nombre FROM usuarios WHERE usuario=a.created_by),
+        (SELECT nombre FROM usuarios WHERE CAST(id AS TEXT)=a.created_by), a.created_by, '') usuario
+    FROM aplicaciones_factura_anticipo a
+    JOIN facturas_anticipo f ON f.id=a.factura_anticipo_id
+    JOIN dim_estacion e ON e.id=a.estacion_id
+    WHERE a.k_cliente=? ORDER BY a.id DESC LIMIT 200`, k);
   const gestiones = await q.all(`SELECT g.*, u.nombre usuario FROM gestiones g LEFT JOIN usuarios u ON u.id=g.usuario_id
     WHERE g.k_cliente=? ORDER BY g.id DESC LIMIT 100`, k);
   const pagos = await q.all(`SELECT p.id, p.no_factura, p.sin_aplicar, p.fecha, p.monto, p.metodo, COALESCE(p.banco,b.nombre) banco,
@@ -419,7 +433,8 @@ async function clienteDetalle({ corte, k }) {
   return {
     cliente: { ...c, credito_actualizado_por: cred.actualizado_por, credito_actualizado: cred.actualizado },
     aging: RANGOS.map((r) => ({ rango: r, monto: am[r] || 0 })),
-    abiertas, por_facturar: porFacturar, anticipos, debito, debito_resumen: { ...debRes, saldo: debRes.recargas - debRes.consumos },
+    abiertas, por_facturar: porFacturar, anticipos, aplicaciones_anticipo_historial: aplicacionesAnticipo,
+    debito, debito_resumen: { ...debRes, saldo: debRes.recargas - debRes.consumos },
     gestiones, pagos, historial: hist,
   };
 }
@@ -551,10 +566,11 @@ async function estadoCuenta({ k, desde = '', hasta = '' }) {
         CASE WHEN a.estado='APLICADA' THEN a.importe_aplicado ELSE 0 END,
         0, 0, a.importe_aplicado,
         CASE WHEN a.estado='CANCELADA' THEN 'Aplicación cancelada' ELSE 'Aplicado' END,
-        'Anticipo', COALESCE(u.nombre,''), 3
+        'Anticipo', COALESCE((SELECT nombre FROM usuarios WHERE usuario=a.created_by),
+          (SELECT nombre FROM usuarios WHERE CAST(id AS TEXT)=a.created_by), a.created_by, ''), 3
       FROM aplicaciones_factura_anticipo a
       JOIN facturas_anticipo x ON x.id=a.factura_anticipo_id
-      LEFT JOIN usuarios u ON u.id=a.created_by WHERE a.k_cliente=?
+      WHERE a.k_cliente=?
       UNION ALL
       SELECT d.fecha, CASE WHEN d.abono>0 THEN 'Abono prepago' ELSE 'Consumo prepago' END,
         COALESCE(d.folio,''), COALESCE(d.folio,''), '', COALESCE(d.grupo,''), d.tipo,

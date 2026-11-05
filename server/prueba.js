@@ -377,6 +377,22 @@ server.listen(0, '127.0.0.1', async () => {
       assert.equal(app1.status, 201, JSON.stringify(app1.data));
       aplicacion1 = app1.data.id;
       assert.equal(app1.data.saldo_disponible, 35000);
+      const fichaCliente = await call('a', 'GET', '/api/cliente?k=' + enc(cliente.k_cliente));
+      assert.equal(fichaCliente.status, 200, JSON.stringify(fichaCliente.data));
+      assert.ok(fichaCliente.data.aplicaciones_anticipo_historial.some((aplicacion) =>
+        aplicacion.id === aplicacion1 && aplicacion.no_factura === factura1 && aplicacion.usuario === 'Administrador'),
+      JSON.stringify(fichaCliente.data.aplicaciones_anticipo_historial));
+      const estacionCliente = await L.q.get('SELECT nombre FROM dim_estacion WHERE id=?', cliente.estacion_id);
+      const reporteCobranza = await call('a', 'GET',
+        `/api/aplicaciones-anticipo?k=${enc(cliente.k_cliente)}&estacion=${cliente.estacion_id}`);
+      assert.equal(reporteCobranza.status, 200, JSON.stringify(reporteCobranza.data));
+      assert.ok(reporteCobranza.data.rows.some((aplicacion) =>
+        aplicacion.id === aplicacion1 && aplicacion.estacion === estacionCliente.nombre && aplicacion.usuario === 'Administrador'));
+      const estadoCuenta = await call('a', 'GET',
+        '/api/cliente/estado-cuenta?k=' + enc(cliente.k_cliente));
+      assert.equal(estadoCuenta.status, 200);
+      assert.ok(estadoCuenta.data.includes('Aplicación de anticipo'));
+      assert.ok(estadoCuenta.data.includes(factura1));
       const busquedaAplicaciones = await call('a', 'GET', '/api/aplicaciones-anticipo?q=' + enc(factura1));
       assert.equal(busquedaAplicaciones.status, 200, JSON.stringify(busquedaAplicaciones.data));
       assert.ok(busquedaAplicaciones.data.rows.some((aplicacion) => aplicacion.id === aplicacion1));
@@ -418,6 +434,12 @@ server.listen(0, '127.0.0.1', async () => {
       const trasAnular = await call('a', 'GET', `/api/facturas-anticipo/${anticipoId}`);
       assert.equal(trasAnular.data.saldo_disponible, 15000);
       assert.equal(trasAnular.data.importe_aplicado, 35000);
+      const movimientosCancelados = await call('a', 'GET', '/api/cliente?k=' + enc(cliente.k_cliente));
+      assert.ok(movimientosCancelados.data.aplicaciones_anticipo_historial.some((aplicacion) =>
+        aplicacion.id === aplicacion1 && aplicacion.estado === 'CANCELADA'));
+      const cobranzaCancelada = await call('a', 'GET',
+        `/api/aplicaciones-anticipo?estado=CANCELADA&estacion=${cliente.estacion_id}`);
+      assert.ok(cobranzaCancelada.data.rows.some((aplicacion) => aplicacion.id === aplicacion1));
       assert.equal((await call('a', 'POST', '/api/aplicaciones-anticipo/' + aplicacion1 + '/cancelar', { motivo: 'Duplicado' })).status, 409);
       assert.equal((await call('a', 'POST', '/api/aplicaciones-anticipo/' + aplicacion2 + '/cancelar', { motivo: 'Corrección de prueba' })).status, 200);
       const saldoRestaurado = await L.q.get(`SELECT saldo FROM ${Q.FAC(fecha)}

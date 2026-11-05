@@ -437,9 +437,19 @@
         ${d.debito.length ? html`<div class="tablewrap" style="max-height:380px"><table><thead><tr><th>Fecha</th><th>Folio</th><th>Operación</th><th>Método</th><th>Banco</th><th>Grupo</th><th class="n">Abono</th><th class="n">Consumo</th></tr></thead><tbody>
         ${d.debito.map((x) => html`<tr><td>${fdate(x.fecha)}</td><td>${x.folio}</td><td>${badge(x.tipo)}</td><td>${x.metodo || ''}</td><td>${x.banco || ''}</td><td>${x.grupo}</td><td class="n">${x.abono ? money(x.abono, 2) : ''}</td><td class="n">${x.importe ? money(x.importe, 2) : ''}</td></tr>`)}</tbody></table></div>
         <div class="mut" style="margin-top:6px">Se muestran los últimos 200 movimientos históricos.</div>` : html`<div class="empty">Sin movimientos históricos.</div>`}`,
-      anticipos: () => d.anticipos.length ? html`<div class="tablewrap nomax"><table><thead><tr><th>Serie / Folio</th><th>UUID</th><th>Fecha</th><th class="n">Original</th><th class="n">Aplicado</th><th class="n">Disponible</th><th>Moneda</th><th>Estado</th></tr></thead><tbody>
-        ${d.anticipos.map((a) => html`<tr><td>${a.serie ? `${a.serie}-` : ''}${a.folio}</td><td class="wrap">${a.uuid_fiscal || '—'}</td><td>${fdate(a.fecha_factura)}</td>
-          <td class="n">${money(a.importe_original, 2)}</td><td class="n">${money(a.importe_aplicado, 2)}</td><td class="n">${money(a.saldo_disponible, 2)}</td><td>${a.moneda}</td><td>${badge(a.estado)}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">El cliente no tiene Facturas de Anticipo.</div>`,
+      anticipos: () => html`
+        <h3>Facturas de Anticipo</h3>
+        ${d.anticipos.length ? html`<div class="tablewrap nomax"><table><thead><tr><th>Serie / Folio</th><th>UUID</th><th>Fecha</th><th class="n">Original</th><th class="n">Aplicado</th><th class="n">Disponible</th><th>Moneda</th><th>Estado</th></tr></thead><tbody>
+          ${d.anticipos.map((a) => html`<tr><td>${a.serie ? `${a.serie}-` : ''}${a.folio}</td><td class="wrap">${a.uuid_fiscal || '—'}</td><td>${fdate(a.fecha_factura)}</td>
+            <td class="n">${money(a.importe_original, 2)}</td><td class="n">${money(a.importe_aplicado, 2)}</td><td class="n">${money(a.saldo_disponible, 2)}</td><td>${a.moneda}</td><td>${badge(a.estado)}</td></tr>`)}</tbody></table></div>`
+          : html`<div class="empty">El cliente no tiene Facturas de Anticipo.</div>`}
+        <h3 style="margin-top:18px">Movimientos de aplicación de anticipos</h3>
+        ${d.aplicaciones_anticipo_historial.length ? html`<div class="tablewrap nomax"><table><thead><tr><th>Fecha</th><th>Aplicación</th><th>Factura de Anticipo</th><th>Factura CxC</th><th>Estación</th><th class="n">Importe</th><th>Estado</th><th>Usuario</th><th>Referencia / motivo</th></tr></thead><tbody>
+          ${d.aplicaciones_anticipo_historial.map((a) => html`<tr><td>${fdate(a.fecha_aplicacion)}</td><td>AP-${a.id}</td>
+            <td>${a.serie ? `${a.serie}-` : ''}${a.folio}</td><td>${a.no_factura}</td><td>${corto(a.estacion)}</td>
+            <td class="n">${money(a.importe_aplicado, 2)} ${a.moneda}</td><td>${badge(a.estado)}</td><td>${a.usuario || '—'}</td>
+            <td class="wrap">${a.estado === 'CANCELADA' ? a.motivo_cancelacion || 'Cancelada' : a.referencia || ''}</td></tr>`)}</tbody></table></div>`
+          : html`<div class="empty">El cliente no tiene movimientos de aplicación de anticipos.</div>`}`,
       gestiones: () => html`${can('gestiones') ? html`<form id="formGest" class="card soft form" style="margin-bottom:12px">
           <label>Tipo<select name="tipo"><option>Llamada</option><option>WhatsApp</option><option>Correo</option><option>Visita</option><option>Otro</option></select></label>
           <label>Resultado<select name="resultado" id="gRes"><option>Contactado</option><option>Sin respuesta</option><option>Promesa de pago</option><option>Disputa</option><option>Otro</option></select></label>
@@ -474,7 +484,7 @@
         ${kpiMini('Saldo disponible de anticipos', money(c.saldo_anticipo, 2), 'Suma de Facturas de Anticipo activas', 'k-green')}
       </div>
       <div class="card" style="margin-top:16px"><h3>Antigüedad de saldos</h3>${d.aging.map((a, i) => html`<div class="hbar static"><span>${a.rango}</span><span class="t"><span class="f" style="width:${(a.monto / maxA) * 100}%;background:${PALETA[i]}"></span></span><span class="a">${money(a.monto)}</span></div>`)}</div>
-      <div class="subtabs" style="margin-top:18px">${tab('abiertas', 'Facturas abiertas', d.abiertas.length)}${tab('porfacturar', 'Por facturar', d.por_facturar.length)}${tab('anticipos', 'Facturas de Anticipo', d.anticipos.length)}${tab('debito', 'Historial anterior')}${tab('gestiones', 'Gestiones', d.gestiones.length)}${tab('pagos', 'Pagos', d.pagos.length)}${tab('historial', 'Historial')}</div>
+      <div class="subtabs" style="margin-top:18px">${tab('abiertas', 'Facturas abiertas', d.abiertas.length)}${tab('porfacturar', 'Por facturar', d.por_facturar.length)}${tab('anticipos', 'Anticipos y movimientos', d.anticipos.length + d.aplicaciones_anticipo_historial.length)}${tab('debito', 'Historial anterior')}${tab('gestiones', 'Gestiones', d.gestiones.length)}${tab('pagos', 'Pagos', d.pagos.length)}${tab('historial', 'Historial')}</div>
       <div id="tabBody">${body}</div>`);
     $('#view').onclick = (e) => { const t = e.target.closest('[data-tab]'); if (t) { cliTab = t.dataset.tab; CG.routes.cliente([encodeURIComponent(k)], {}, true); } };
     const formEstadoCuenta = $('#formEstadoCuenta');
