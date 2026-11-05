@@ -6,7 +6,8 @@
   const NAV = [
     { id: 'clientes', label: 'Clientes', perm: 'ver' },
     { id: 'cartera', label: 'Cartera', perm: 'ver' },
-    { id: 'debito', label: 'Prepago', perm: 'ver' },
+    { id: 'facturas-anticipo', label: 'Facturas de Anticipo', perm: 'anticipos_ver' },
+    { id: 'aplicaciones-anticipo', label: 'Aplicación de Anticipos', perm: 'aplicaciones_anticipo_ver' },
     { id: 'pagos', label: 'Pagos', perm: 'pagos' },
     { id: 'por-facturar', label: 'Despachos', perm: 'ver' },
     { id: 'cobranza', label: 'Cobranza', perm: 'ver' },
@@ -34,7 +35,7 @@
       <div class="kpi k-blue"><span class="l">Facturas abiertas (CxC)</span><span class="v">${int(k.facturas_abiertas)}</span><span class="s">${int(k.clientes_con_saldo)} clientes con saldo</span></div>
       <div class="kpi"><span class="l">Saldo abierto (CxC)</span><span class="v">${money(k.facturada, 2)}</span><span class="s">+ ${money(k.por_facturar, 2)} por facturar</span></div>
       <div class="kpi k-red"><span class="l">Saldo vencido (CxC)</span><span class="v">${money(k.vencida, 2)}</span><span class="s">${pct(k.pct_vencida, 1)} del saldo abierto · ${money(k.mayor_60, 2)} a más de 60 días</span></div>
-      <div class="kpi k-green"><span class="l">Saldo a favor (Débito)</span><span class="v">${money(k.saldo_a_favor, 2)}</span><span class="s">${int(k.clientes_a_favor)} clientes con saldo prepagado</span></div>`.s;
+      <div class="kpi k-green"><span class="l">Saldo disponible de anticipos</span><span class="v">${money(k.saldo_a_favor, 2)}</span><span class="s">${int(k.clientes_a_favor)} clientes con anticipos activos</span></div>`.s;
   }
   let dashboardCacheKey = '', dashboardRequest = null;
   let sessionGeneration = 0;

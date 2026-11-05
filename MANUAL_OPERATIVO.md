@@ -1,7 +1,7 @@
 # Gas_App Financiero · Manual Operativo Integral
 
 **Guía de Funcionalidades, Menús y Flujo de Trabajo Operativo**  
-*Control de Cartera CxC y Sistema de Débito Prepago para Estaciones de Servicio*
+*Control de Cartera CxC y Anticipos para Estaciones de Servicio*
 
 ---
 
@@ -17,7 +17,7 @@
    - [1. Cartera Activa (CxC)](#1-cartera-activa-cxc)
    - [2. Aplicación de Pagos (CxC)](#2-aplicación-de-pagos-cxc)
    - [3. Por Facturar](#3-por-facturar)
-   - [4. Control de Débito (Prepago)](#4-control-de-débito-prepago)
+   - [4. Facturas de Anticipo y Aplicaciones](#4-facturas-de-anticipo-y-aplicaciones)
    - [5. Cobranza](#5-cobranza)
    - [6. Alertas](#6-alertas)
    - [7. Clientes y Ficha de Cliente](#7-clientes-y-ficha-de-cliente)
@@ -30,13 +30,14 @@
 
 ## 1. Introducción y Arquitectura General
 
-**Gas_App Financiero** es una solución integral para el control de cuentas por cobrar (CxC), facturación de despachos a crédito y administración de saldos a favor (débito prepago) en estaciones de servicio gasolineras.
+**Gas_App Financiero** es una solución integral para el control de cuentas por cobrar (CxC), facturación de despachos a crédito y administración de Facturas de Anticipo y sus aplicaciones en estaciones de servicio gasolineras.
 
 ### Principios Fundamentales:
 - **Base de datos:** requiere `@libsql/client`; usa SQLite local (`data/cartera.db`) por defecto y Turso si están configuradas `TURSO_DATABASE_URL` y `TURSO_AUTH_TOKEN`.
 - **Separación estricta de esquemas financieros:**
   - **Cartera CxC:** Crédito otorgado con vencimiento a plazo, facturas y saldos por cobrar.
-  - **Débito Prepago:** Anticipos y depósitos recibidos previamente de los que se van descontando consumos de combustible (saldos a favor del cliente).
+  - **Facturas de Anticipo:** CFDI recibidos con saldo disponible que puede aplicarse a facturas de CxC existentes del mismo cliente.
+  - **Prepago histórico:** Se conservan sus tablas y movimientos anteriores para consulta; no se registran operaciones nuevas ni se migran automáticamente esos movimientos a Facturas de Anticipo.
 
 ---
 
@@ -46,9 +47,9 @@ El sistema implementa control de acceso basado en roles (RBAC) con alcance por e
 
 | Rol | Alcance de Estaciones | Permisos Operativos |
 |---|---|---|
-| **Administrador General** | Acceso a todas o estaciones específicas | Acceso total: Usuarios, bitácora de auditoría, carga y reemplazo de Excel, catálogos maestros (bancos, métodos), clientes, crédito, facturas, cobros y débito. |
-| **Gestor de Estación** | Limitado a una o varias estaciones asignadas | Operación diaria en sus estaciones: Registrar facturas, aplicar cobros, movimientos de débito prepago, dar de alta clientes y editar condiciones de crédito, y registrar gestiones de cobranza. |
-| **Supervisor** | Limitado a una o varias estaciones asignadas | Puede anular prepagos, modificar importes de despachos pendientes y anular pagos; no puede registrar pagos o movimientos ni administrar usuarios. |
+| **Administrador General** | Acceso a todas o estaciones específicas | Acceso total: Usuarios, bitácora de auditoría, carga y reemplazo de Excel, catálogos maestros (bancos, métodos), clientes, crédito, facturas, anticipos, cobros y aplicaciones. |
+| **Gestor de Estación** | Limitado a una o varias estaciones asignadas | Operación diaria en sus estaciones: Registrar facturas y anticipos, aplicar anticipos y cobros, dar de alta clientes y editar condiciones de crédito, y registrar gestiones de cobranza. |
+| **Supervisor** | Limitado a una o varias estaciones asignadas | Puede cancelar Facturas de Anticipo y aplicaciones, modificar importes de despachos pendientes y anular pagos; no puede registrar pagos o anticipos ni administrar usuarios. |
 | **Consulta** | Global o por estación | Solo lectura: Visualización de indicadores, reportes, fichas y exportación de tablas a formato CSV. |
 
 Al crear o editar usuarios, marca **Acceso a todas las estaciones** para incluir las estaciones futuras, o desmárcala para seleccionar estaciones específicas desde el desplegable dinámico. Usa **Seleccionar todas** para elegir rápidamente todas las estaciones actuales. Debe seleccionarse al menos una estación en el modo específico. Las asignaciones se guardan en `usuario_estaciones`, con referencias a usuarios y estaciones.
@@ -71,9 +72,9 @@ flowchart TD
     end
 
     subgraph S2 [Fase 2: Día a Día]
-        B1[1. Revisión de KPIs y Alertas] --> B2[2. Registrar Recargas / Consumos Débito]
+        B1[1. Revisión de KPIs y Alertas] --> B2[2. Registrar Facturas de Anticipo]
         B2 --> B3[3. Facturar Despachos Pendientes]
-        B3 --> B4[4. Registrar Facturas Manuales]
+        B3 --> B4[4. Aplicar Anticipos a facturas CxC]
         B4 --> B5[5. Aplicar Pagos y Cobros CxC]
         B5 --> B6[6. Seguimiento a Cobranza y Promesas]
     end
@@ -106,14 +107,14 @@ flowchart TD
 ### Fase 2: Operación Diaria (Día a Día)
 
 1. **Revisión de Cabecera y Alertas:**
-   - Entrar al sistema y revisar las 4 tarjetas superiores de KPI (Facturas abiertas, Saldo abierto, Saldo vencido, Saldo a favor).
+   - Entrar al sistema y revisar las tarjetas superiores de KPI (Facturas abiertas, Saldo abierto, Saldo vencido y saldo disponible de anticipos).
    - Entrar a la pestaña **Alertas** para identificar:
      - Promesas de pago que vencen hoy o están vencidas.
      - Clientes que superaron su límite de crédito disponible.
      - Facturas con más de 60 días de antigüedad.
-2. **Atención de Clientes Prepago (Pestaña *Control de Débito*):**
-   - Si un cliente deposita dinero: Registrar un **Abono (+)** seleccionando método de pago, banco receptor, folio del comprobante y monto.
-   - Si un cliente retira combustible a cuenta de su saldo: Registrar un **Consumo (−)** con el folio del ticket/nota.
+2. **Registro de anticipos (pestañas *Facturas de Anticipo* y *Aplicación de Anticipos*):**
+   - Capturar la Factura de Anticipo con cliente, serie/folio, UUID (si está disponible), fecha, importe, moneda y tipo de cambio.
+   - Aplicar el saldo disponible a facturas CxC abiertas del mismo cliente. Las facturas actuales no contienen moneda, por lo que solo se permiten aplicaciones de anticipos en MXN.
 3. **Revisión y Emisión de Despachos (Pestaña *Por Facturar*):**
    - Revisar los consumos pendientes de facturar provenientes del sistema o capturados en la app.
    - Al emitir la factura fiscal del cliente: Pulsar **"Seleccionar despachos"**, marcar los despachos que cubre la factura, ingresar el folio y fecha de la factura. El monto pasa de inmediato a **Cartera Activa**.
@@ -158,7 +159,7 @@ La barra superior permanece visible en todas las pantallas y condiciona todos lo
   - *Facturas abiertas (CxC):* Conteo total de facturas pendientes y número de clientes deudores.
   - *Saldo abierto (CxC):* Monto total facturado pendiente de cobro + monto por facturar acumulado.
   - *Saldo vencido (CxC):* Monto con fecha de vencimiento rebasada, porcentaje sobre el total y saldo a más de 60 días.
-  - *Saldo a favor (Débito):* Total de dinero disponible en prepago de clientes a favor.
+  - *Saldo disponible de anticipos:* Total del saldo de Facturas de Anticipo activas.
 
 ---
 
@@ -183,8 +184,8 @@ Es la pantalla central de cuentas por cobrar. Muestra todas las facturas de cré
 - **Detalle de Factura (Modal al hacer clic en el renglón):**
   - Desglose completo: Importe original, abonos en Excel, pagos capturados en la app y saldo pendiente actual.
   - Para facturas emitidas desde despachos pendientes después de esta actualización aparece **Anular** junto a **Pago**; restaura sus despachos a **Por facturar**. No está disponible si hay pagos asociados ni para facturas anteriores que no guardaron el estado previo.
-  - Lista de pagos registrados en la aplicación con opción de **Anular** (restableciendo el saldo y devolviendo el prepago cuando corresponda).
-  - Si un pago de prepago quedó anulado sin registrar su devolución, aparece **Reparar prepago** para regularizar el saldo a favor.
+  - Lista de pagos registrados en la aplicación con opción de **Anular** (restableciendo el saldo de la factura).
+  - Los pagos históricos originados en Prepago conservan sus referencias para poder regularizar el historial.
   - Desglose de despachos de combustible individuales que integran esa factura.
   - Botón para editar la factura (si fue capturada manualmente y no supera abonos previos).
 
@@ -223,19 +224,13 @@ Concentra todos aquellos despachos de combustible otorgados a crédito que han s
 
 ---
 
-### 4. Control de Débito (Prepago)
-Módulo totalmente independiente de CxC para clientes que pagan anticipadamente por su combustible.
+### 4. Facturas de Anticipo y Aplicaciones
+El módulo registra anticipos individualmente y vincula cada aplicación a una factura CxC existente.
 
-#### Funciones y Operaciones:
-- **Panel Izquierdo - Registrar Movimiento:**
-  - Selección de Cliente.
-  - **Abono (+):** Entrada de dinero prepago. Obliga a seleccionar método de pago y banco receptor, además de folio y monto.
-  - **Consumo (−):** Descuento de combustible consumido. Solo requiere monto, fecha y folio de ticket.
-- **Control de Sobregiros:** Si un consumo supera el saldo a favor, el sistema permite registrarlo pero emite una advertencia visual ("Consumido en exceso") y el saldo se torna negativo.
-- **Panel Derecho - Clientes con Saldo a Favor e Historial:**
-  - Tarjeta de clientes con saldo disponible a favor.
-  - Tabla de movimientos paginada con filtro por operación (Abonos o Consumos) y fechas.
-  - Botón **Anular** en movimientos registrados en la app para corregir errores de captura.
+- **Facturas de Anticipo:** Captura cliente, serie y folio, UUID fiscal opcional, fecha, importe, moneda, tipo de cambio, referencia y observaciones. Se pueden editar antes de que exista cualquier aplicación. Para cancelar una factura, primero deben cancelarse todas sus aplicaciones activas y debe indicarse un motivo.
+- **Aplicación de Anticipos:** Selecciona cliente, Factura de Anticipo y factura CxC abierta; registra fecha, importe, referencia y observaciones. El sistema valida el saldo disponible del anticipo y el saldo de la factura, impide aplicar a otro cliente o aplicar monedas distintas de MXN, y reduce automáticamente el saldo CxC.
+- **Historial y cancelaciones:** Las aplicaciones canceladas se conservan en el historial. Cancelar una aplicación devuelve el importe al saldo del anticipo y restablece el saldo pendiente de la factura CxC. El sistema protege los reintentos para no duplicar aplicaciones.
+- **Prepago anterior:** No aparece como módulo operativo en el menú. Sus datos siguen conservados como histórico y no se migran automáticamente a anticipos; no se aceptan nuevos movimientos de Prepago.
 
 ---
 
@@ -273,22 +268,22 @@ Pantalla de monitoreo preventivo de riesgos calculada a la fecha de corte. Cuent
 La pestaña **Clientes** concentra el catálogo y la administración de la información financiera y de contacto de cada cliente.
 
 #### Catálogo de Clientes:
-- Formulario de alta rápida de clientes con: Nombre, estación asignada, número de cliente, RFC, límite de crédito, días de crédito, correo, teléfono y modo de carga (Vales debito, Vales Credito, Flotilla debito o Flotilla Credito).
+- Formulario de alta rápida de clientes con: Nombre, estación asignada, número de cliente, RFC, límite de crédito, días de crédito, correo, teléfono y modo de carga (Vales débito, Vales crédito, Flotilla débito, Flotilla crédito, Código de barras, Firma autorizada o Cupón de carga).
 - Tabla maestra ordenable por sus columnas (ascendente/descendente), con búsqueda por RFC, nombre o folio, modo de carga entre teléfono y límite de crédito, y filtros de riesgo: *Con saldo*, *Vencido*, *Excedido*, *Sin límite*, *Con saldo a favor*.
 - Exportación completa a CSV.
 
 #### Ficha Individual del Cliente (Vista 360°):
 Al hacer clic en cualquier cliente en cualquier parte del sistema, se abre su ficha detallada:
-- **Tarjetas superiores:** Límite de crédito, días de crédito, saldo total, crédito disponible (% de uso), saldo vencido y saldo a favor de débito prepago.
+- **Tarjetas superiores:** Límite de crédito, días de crédito, saldo total, crédito disponible (% de uso), saldo vencido y saldo disponible de anticipos.
 - **Gráfica particular de antigüedad de saldos** de ese cliente.
 - **6 Pestañas de detalle interno:**
   1. *Facturas abiertas:* Facturas vigentes con botón de pago directo.
   2. *Por facturar:* Despachos pendientes de facturación de este cliente.
-  3. *Débito:* Resumen de recargas vs consumos y tabla de los últimos 200 movimientos prepago.
+  3. *Historial anterior:* Consulta de los movimientos históricos de Prepago que se conservan; no se registran operaciones nuevas desde esta pestaña.
   4. *Gestiones:* Formulario para registrar una nueva llamada, visita o promesa de pago, y lista de gestiones históricas.
   5. *Pagos:* Historial de todos los pagos capturados para este cliente.
   6. *Historial:* Facturación vs cobranza mes con mes para análisis de comportamiento de pago.
-- **Estado de cuenta CSV:** desde la ficha se descarga el detalle de despachos, facturas, abonos, pagos, movimientos de prepago y gestiones. El rango Desde/Hasta es opcional; al usar Desde, el archivo incluye el saldo inicial del período.
+- **Estado de cuenta CSV:** desde la ficha se descarga el detalle de despachos, facturas, abonos, pagos, aplicaciones de anticipos, movimientos históricos de prepago y gestiones. El rango Desde/Hasta es opcional; al usar Desde, el archivo incluye el saldo inicial del período.
 
 ---
 
@@ -360,9 +355,10 @@ Módulo para sincronizar o migrar información a partir de un libro maestro de E
    - **SIN LÍMITE:** Cuando $\text{Cartera Total} > 0$ y el $\text{Límite de Crédito} = 0$.
    - **OK:** Cuando la cartera total se encuentra dentro del margen de crédito autorizado.
 
-6. **Saldo de Débito (Prepago):**
-   $$\text{Saldo a Favor} = \sum \text{Abonos (Recargas)} - \sum \text{Consumos}$$
-   *El saldo de débito prepago nunca se mezcla contablemente con la cartera de crédito (CxC).*
+6. **Anticipos:**
+   - El saldo disponible se calcula como **Importe original - aplicaciones activas**.
+   - Las aplicaciones activas reducen el saldo pendiente de la factura CxC vinculada. Al cancelar una aplicación, ambos saldos se restablecen y el historial cancelado permanece visible.
+   - Las facturas actuales no registran moneda, por lo que solo se aplican anticipos MXN. El Prepago histórico permanece separado y no se migra automáticamente.
 
 7. **Seguridad y Bloqueo de Cuentas:**
    - Las contraseñas están encriptadas con algoritmo `scrypt`.

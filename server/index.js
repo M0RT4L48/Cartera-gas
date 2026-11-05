@@ -70,7 +70,41 @@ function csv(res, nombre, cols, rows) {
 }
 const exigir = (user, permiso) => { if (!can(user, permiso)) throw new HttpError(403, 'No tienes permiso para esta acción'); };
 const txt = (v, max = 300) => (v == null ? '' : String(v).trim().slice(0, max));
+const modosCargaCliente = ['Vales débito', 'Vales crédito', 'Flotilla débito', 'Flotilla crédito', 'Código de barras', 'Firma autorizada', 'Cupón de carga'];
+const modosCargaAnteriores = {
+  'Vales debito': 'Vales débito',
+  'Vales Credito': 'Vales crédito',
+  'Flotilla debito': 'Flotilla débito',
+  'Flotilla Credito': 'Flotilla crédito',
+};
+const normalizarModoCarga = (valor) => modosCargaAnteriores[valor] || valor;
 const redondea = (n) => Math.round(n * 100) / 100;
+function datosFacturaAnticipo(body) {
+  const folio = txt(body.folio, 80);
+  const serie = txt(body.serie, 30) || null;
+  const uuid = txt(body.uuid_fiscal, 36).toUpperCase() || null;
+  const fecha = txt(body.fecha_factura, 10);
+  const importe = redondea(L.num(body.importe_original, -1));
+  const moneda = txt(body.moneda, 3).toUpperCase() || 'MXN';
+  const cambio = body.tipo_cambio == null || body.tipo_cambio === '' ? null : redondea(L.num(body.tipo_cambio, -1));
+  if (!folio) throw new HttpError(400, 'El folio de la Factura de Anticipo es obligatorio');
+  if (uuid && !/^[0-9A-F]{8}-[0-9A-F]{4}-[1-5][0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/.test(uuid)) {
+    throw new HttpError(400, 'El UUID fiscal no tiene un formato válido');
+  }
+  if (!L.esFecha(fecha) || fecha > L.hoyISO()) throw new HttpError(400, 'La fecha de factura es inválida o futura');
+  if (!(importe > 0) || importe > 1e9) throw new HttpError(400, 'El importe original debe ser mayor a cero y no exceder $1,000,000,000');
+  if (!/^[A-Z]{3}$/.test(moneda)) throw new HttpError(400, 'La moneda debe ser un código ISO de tres letras');
+  if (moneda === 'MXN') {
+    if (cambio != null && cambio !== 1) throw new HttpError(400, 'El tipo de cambio de MXN debe ser 1');
+  } else if (!(cambio > 0) || cambio > 1e9) {
+    throw new HttpError(400, 'Indica un tipo de cambio mayor a cero para una moneda distinta de MXN');
+  }
+  return {
+    serie, folio, uuid, fecha, importe, moneda, cambio,
+    referencia: txt(body.referencia, 100) || null,
+    observaciones: txt(body.observaciones, 1000) || null,
+  };
+}
 const requiereBanco = (v) => v === true || v === 1 || v === '1' || v === 'on';
 
 function alcance(user, query) {
@@ -368,6 +402,27 @@ async function api(req, res, url) {
       await verificaCliente(user, query.get('k'));
       return send(res, 200, await Q.facturaDetalle({ corte: await Q.corteValido(query.get('corte')), k: query.get('k'), est: Number(query.get('est')), no: query.get('no') }));
     }
+    if (p === '/api/facturas-anticipo') {
+      exigir(user, 'anticipos_ver');
+      return send(res, 200, await Q.facturasAnticipo(await params(query, user)));
+    }
+    const anticipoIdMatch = p.match(/^\/api\/facturas-anticipo\/(\d+)$/);
+    if (anticipoIdMatch) {
+      exigir(user, 'anticipos_ver');
+      const factura = await Q.facturaAnticipoDetalle(Number(anticipoIdMatch[1]));
+      await verificaCliente(user, factura.k_cliente);
+      return send(res, 200, factura);
+    }
+    if (p === '/api/aplicaciones-anticipo/opciones') {
+      exigir(user, 'aplicaciones_anticipo_ver');
+      const k = query.get('k');
+      await verificaCliente(user, k);
+      return send(res, 200, await Q.opcionesAplicacionAnticipo({ k, corte: await Q.corteValido(query.get('corte')) }));
+    }
+    if (p === '/api/aplicaciones-anticipo') {
+      exigir(user, 'aplicaciones_anticipo_ver');
+      return send(res, 200, await Q.aplicacionesAnticipo(await params(query, user)));
+    }
     const facturaIdMatch = p.match(/^\/api\/cartera\/facturas\/(\d+)$/);
     if (facturaIdMatch) {
       const factura = await q.get(`SELECT f.*, c.cliente, e.nombre estacion
@@ -391,7 +446,7 @@ async function api(req, res, url) {
         await L.bitacora(user, 'EXPORT', `clientes ${r.total}`, ip(req));
         return csv(res, 'clientes.csv', [['estacion', 'Estación'], ['cliente', 'Cliente'], ['no_cliente', 'No. cliente'], ['rfc', 'RFC'], ['email', 'Correo electrónico'], ['telefono', 'Teléfono'], ['modo_carga', 'Modo de carga'], ['limite', 'Límite de crédito'],
           ['dias_credito', 'Días de crédito'], ['saldo_fact', 'Saldo facturado'], ['vencido', 'Vencido'], ['por_facturar', 'Por facturar'],
-          ['saldo_total', 'Saldo total'], ['disponible', 'Disponible'], ['max_dias', 'Máx. días vencido'], ['saldo_favor', 'Saldo a favor (débito)'], ['riesgo', 'Riesgo']], r.rows);
+          ['saldo_total', 'Saldo total'], ['disponible', 'Disponible'], ['max_dias', 'Máx. días vencido'], ['saldo_anticipo', 'Saldo disponible de anticipos'], ['riesgo', 'Riesgo']], r.rows);
       }
       return send(res, 200, await Q.clientes(pr));
     }
@@ -660,6 +715,9 @@ async function api(req, res, url) {
     if (b.fecha > L.hoyISO()) throw new HttpError(400, 'La fecha de pago no puede ser futura');
     const metodoInput = txt(b.metodo, 40) || 'Transferencia SPEI';
     const esPrepagoDirecto = redondea(L.num(b.desde_prepago, 0)) > 0;
+    if (esPrepagoDirecto || /^prepago$/i.test(metodoInput)) {
+      throw new HttpError(410, 'El prepago fue reemplazado. Registra la Factura de Anticipo y su aplicación desde sus pantallas.');
+    }
     const metodo = esPrepagoDirecto && metodoInput === 'Prepago'
       ? { nombre: 'Prepago', requiere_banco: 0 }
       : await q.get('SELECT nombre,requiere_banco FROM metodos_pago WHERE nombre=? COLLATE NOCASE', metodoInput);
@@ -917,6 +975,10 @@ async function api(req, res, url) {
         cliente.k_cliente, estacionId, noFactura)) {
         throw new HttpError(409, 'No se puede anular la factura porque tiene pagos asociados');
       }
+      if (await q.get(`SELECT 1 FROM aplicaciones_factura_anticipo WHERE k_cliente=? AND estacion_id=?
+        AND no_factura=? AND estado='APLICADA' LIMIT 1`, cliente.k_cliente, estacionId, noFactura)) {
+        throw new HttpError(409, 'Cancela las aplicaciones de anticipo antes de restaurar los despachos');
+      }
       for (const fila of filas) {
         const tabla = fila.origen === 'app' ? 'fact_cxc_app' : 'fact_cxc';
         const id = fila.origen === 'app' ? fila.id - 2000000000 : fila.id;
@@ -952,6 +1014,10 @@ async function api(req, res, url) {
     }
     const pagos = await q.get('SELECT COALESCE(SUM(monto),0) monto, COUNT(*) n FROM pagos WHERE k_cliente=? AND estacion_id=? AND no_factura=? AND anulado=0',
       factura.k_cliente, factura.estacion_id, factura.no_factura);
+    if (await q.get(`SELECT 1 FROM aplicaciones_factura_anticipo WHERE k_cliente=? AND estacion_id=?
+      AND no_factura=? AND estado='APLICADA' LIMIT 1`, factura.k_cliente, factura.estacion_id, factura.no_factura)) {
+      throw new HttpError(409, 'Cancela las aplicaciones de anticipo antes de editar la factura');
+    }
     if (importe + Q.EPS < factura.abono + pagos.monto) {
       throw new HttpError(400, `El importe no puede ser menor a los abonos y pagos registrados (${redondea(factura.abono + pagos.monto).toFixed(2)})`);
     }
@@ -968,7 +1034,186 @@ async function api(req, res, url) {
     return send(res, 200, { ok: true, id, no_factura: noFactura, importe, fecha_vencimiento: fechaVencimiento });
   }
 
-  // ----- debito prepago -----
+  // ----- facturas de anticipo y sus aplicaciones -----
+  if (m === 'POST' && p === '/api/facturas-anticipo') {
+    exigir(user, 'anticipos_crear');
+    const b = await readBody(req);
+    const cliente = await verificaCliente(user, txt(b.k_cliente, 200));
+    const datos = datosFacturaAnticipo(b);
+    const duplicada = await q.get(`SELECT id FROM facturas_anticipo
+      WHERE k_cliente=? AND COALESCE(serie,'')=? AND folio=? COLLATE NOCASE`,
+    cliente.k_cliente, datos.serie || '', datos.folio);
+    if (duplicada) throw new HttpError(409, 'Ya existe una Factura de Anticipo con ese folio para el cliente');
+    if (datos.uuid && await q.get('SELECT id FROM facturas_anticipo WHERE uuid_fiscal=? COLLATE NOCASE', datos.uuid)) {
+      throw new HttpError(409, 'El UUID fiscal ya está registrado');
+    }
+    let id;
+    await tx(async () => {
+      const r = await q.run(`INSERT INTO facturas_anticipo
+        (k_cliente,serie,folio,uuid_fiscal,fecha_factura,importe_original,importe_aplicado,saldo_disponible,
+         moneda,tipo_cambio,referencia,observaciones,estado,created_by)
+        VALUES (?,?,?,?,?,?,0,?,?,?,?,?,'ABIERTA',?)`,
+      cliente.k_cliente, datos.serie, datos.folio, datos.uuid, datos.fecha, datos.importe, datos.importe,
+      datos.moneda, datos.cambio, datos.referencia, datos.observaciones, user.usuario);
+      id = Number(r.lastInsertRowid);
+      await L.bitacora(user, 'ANTICIPO_ALTA', `#${id} ${cliente.k_cliente} ${datos.serie || ''}-${datos.folio} $${datos.importe} ${datos.moneda}`, ip(req));
+    });
+    return send(res, 201, { ok: true, id, saldo_disponible: datos.importe, estado: 'ABIERTA' });
+  }
+  if (m === 'PUT' && (mt = p.match(/^\/api\/facturas-anticipo\/(\d+)$/))) {
+    exigir(user, 'anticipos_editar');
+    const id = Number(mt[1]), b = await readBody(req), datos = datosFacturaAnticipo(b);
+    const existente = await q.get('SELECT * FROM facturas_anticipo WHERE id=?', id);
+    if (!existente) throw new HttpError(404, 'Factura de Anticipo no encontrada');
+    await verificaCliente(user, existente.k_cliente);
+    if (existente.estado === 'CANCELADA') throw new HttpError(409, 'No se puede editar una Factura de Anticipo cancelada');
+    if (Number(existente.importe_aplicado) > Q.EPS ||
+        await q.get('SELECT 1 FROM aplicaciones_factura_anticipo WHERE factura_anticipo_id=? LIMIT 1', id)) {
+      throw new HttpError(409, 'No se puede editar una Factura de Anticipo que tiene aplicaciones; conserva su historial');
+    }
+    const duplicada = await q.get(`SELECT id FROM facturas_anticipo WHERE id<>? AND k_cliente=?
+      AND COALESCE(serie,'')=? AND folio=? COLLATE NOCASE`, id, existente.k_cliente, datos.serie || '', datos.folio);
+    if (duplicada) throw new HttpError(409, 'Ya existe una Factura de Anticipo con ese folio para el cliente');
+    if (datos.uuid && await q.get('SELECT id FROM facturas_anticipo WHERE id<>? AND uuid_fiscal=? COLLATE NOCASE', id, datos.uuid)) {
+      throw new HttpError(409, 'El UUID fiscal ya está registrado');
+    }
+    await tx(async () => {
+      await q.run(`UPDATE facturas_anticipo SET serie=?,folio=?,uuid_fiscal=?,fecha_factura=?,importe_original=?,
+        importe_aplicado=0,saldo_disponible=?,moneda=?,tipo_cambio=?,referencia=?,observaciones=?,estado='ABIERTA',
+        updated_at=datetime('now'),updated_by=? WHERE id=? AND estado<>'CANCELADA' AND importe_aplicado=0`,
+      datos.serie, datos.folio, datos.uuid, datos.fecha, datos.importe, datos.importe, datos.moneda, datos.cambio,
+      datos.referencia, datos.observaciones, user.usuario, id);
+      await L.bitacora(user, 'ANTICIPO_EDITAR', `#${id} ${existente.folio}->${datos.folio}; importe ${existente.importe_original}->${datos.importe}`, ip(req));
+    });
+    return send(res, 200, { ok: true, id, saldo_disponible: datos.importe, estado: 'ABIERTA' });
+  }
+  if (m === 'POST' && (mt = p.match(/^\/api\/facturas-anticipo\/(\d+)\/cancelar$/))) {
+    exigir(user, 'anticipos_cancelar');
+    const id = Number(mt[1]), b = await readBody(req), motivo = txt(b.motivo, 500);
+    if (!motivo) throw new HttpError(400, 'Indica el motivo de cancelación');
+    const resultado = await tx(async () => {
+      const factura = await q.get('SELECT * FROM facturas_anticipo WHERE id=?', id);
+      if (!factura) throw new HttpError(404, 'Factura de Anticipo no encontrada');
+      await verificaCliente(user, factura.k_cliente);
+      if (factura.estado === 'CANCELADA') throw new HttpError(409, 'La Factura de Anticipo ya está cancelada');
+      if (await q.get(`SELECT 1 FROM aplicaciones_factura_anticipo
+        WHERE factura_anticipo_id=? AND estado='APLICADA' LIMIT 1`, id)) {
+        throw new HttpError(409, 'Cancela primero las aplicaciones activas de esta Factura de Anticipo');
+      }
+      await q.run(`UPDATE facturas_anticipo SET estado='CANCELADA',fecha_cancelacion=datetime('now'),
+        motivo_cancelacion=?,updated_at=datetime('now'),updated_by=? WHERE id=? AND estado<>'CANCELADA'`,
+      motivo, user.usuario, id);
+      await L.bitacora(user, 'ANTICIPO_CANCELAR', `#${id} saldo ${factura.saldo_disponible}; motivo:${motivo}`, ip(req));
+      return { saldo_disponible: factura.saldo_disponible };
+    });
+    return send(res, 200, { ok: true, saldo_disponible: resultado.saldo_disponible, estado: 'CANCELADA' });
+  }
+  if (m === 'POST' && p === '/api/aplicaciones-anticipo') {
+    exigir(user, 'aplicaciones_anticipo_crear');
+    const b = await readBody(req), k = txt(b.k_cliente, 200), idAnticipo = Number(b.factura_anticipo_id);
+    const estacionId = Number(b.estacion_id), noFactura = txt(b.no_factura, 80);
+    const fecha = txt(b.fecha_aplicacion, 10), importe = redondea(L.num(b.importe_aplicado, -1));
+    const idempotencia = txt(b.idempotencia, 100);
+    const referencia = txt(b.referencia, 100) || null, observaciones = txt(b.observaciones, 1000) || null;
+    const cliente = await verificaCliente(user, k);
+    if (!Number.isSafeInteger(idAnticipo) || idAnticipo <= 0) throw new HttpError(400, 'Selecciona una Factura de Anticipo válida');
+    if (!Number.isInteger(estacionId) || estacionId !== cliente.estacion_id || !noFactura) throw new HttpError(400, 'Selecciona una factura existente del cliente');
+    if (!L.esFecha(fecha) || fecha > L.hoyISO()) throw new HttpError(400, 'La fecha de aplicación es inválida o futura');
+    if (!(importe > 0) || importe > 1e9) throw new HttpError(400, 'El importe a aplicar debe ser mayor a cero');
+    if (!/^[A-Za-z0-9._:-]{16,100}$/.test(idempotencia)) throw new HttpError(400, 'Clave de idempotencia inválida');
+    const previo = await q.get('SELECT id,factura_anticipo_id,k_cliente,estacion_id,no_factura,importe_aplicado,estado FROM aplicaciones_factura_anticipo WHERE idempotencia=?', idempotencia);
+    if (previo) {
+      if (previo.factura_anticipo_id === idAnticipo && previo.k_cliente === k && previo.estacion_id === estacionId &&
+          previo.no_factura === noFactura && Number(previo.importe_aplicado) === importe) {
+        return send(res, 200, { ok: true, repetida: true, id: previo.id, estado: previo.estado });
+      }
+      throw new HttpError(409, 'La clave de idempotencia ya se utilizó para otra aplicación');
+    }
+    const corte = await Q.corteValido(b.corte);
+    const resultado = await tx(async () => {
+      const existente = await q.get(`SELECT id,factura_anticipo_id,k_cliente,estacion_id,no_factura,importe_aplicado,estado
+        FROM aplicaciones_factura_anticipo WHERE idempotencia=?`, idempotencia);
+      if (existente) {
+        if (existente.factura_anticipo_id === idAnticipo && existente.k_cliente === k &&
+            existente.estacion_id === estacionId && existente.no_factura === noFactura &&
+            Number(existente.importe_aplicado) === importe) {
+          return { repetida: true, id: existente.id, estado: existente.estado };
+        }
+        throw new HttpError(409, 'La clave de idempotencia ya se utilizó para otra aplicación');
+      }
+      const anticipo = await q.get('SELECT * FROM facturas_anticipo WHERE id=?', idAnticipo);
+      if (!anticipo) throw new HttpError(404, 'Factura de Anticipo no encontrada');
+      if (anticipo.k_cliente !== k) throw new HttpError(400, 'La Factura de Anticipo no pertenece al cliente seleccionado');
+      if (anticipo.estado === 'CANCELADA') throw new HttpError(400, 'La Factura de Anticipo está cancelada');
+      if (anticipo.estado === 'CERRADA' || Number(anticipo.saldo_disponible) <= Q.EPS) throw new HttpError(400, 'La Factura de Anticipo está cerrada o no tiene saldo disponible');
+      if (anticipo.moneda !== 'MXN') throw new HttpError(400, 'Las facturas existentes no registran moneda; solo se pueden aplicar anticipos MXN');
+      const factura = await q.get(`SELECT abierta,saldo FROM ${Q.FAC(corte)}
+        WHERE k_cliente=? AND estacion_id=? AND no_factura=?`, k, estacionId, noFactura);
+      if (!factura) throw new HttpError(404, 'Factura de despacho no encontrada');
+      if (!factura.abierta || Number(factura.saldo) <= Q.EPS) throw new HttpError(400, 'La factura de despacho está cancelada, cerrada o sin saldo pendiente');
+      if (importe > Number(anticipo.saldo_disponible) + Q.EPS) throw new HttpError(400, 'El importe excede el saldo disponible de la Factura de Anticipo');
+      if (importe > Number(factura.saldo) + Q.EPS) throw new HttpError(400, `El importe excede el saldo pendiente de la factura (${Number(factura.saldo).toFixed(2)})`);
+      const r = await q.run(`INSERT INTO aplicaciones_factura_anticipo
+        (idempotencia,k_cliente,factura_anticipo_id,estacion_id,no_factura,fecha_aplicacion,importe_aplicado,
+         moneda,tipo_cambio,estado,referencia,observaciones,created_by)
+        VALUES (?,?,?,?,?,?,?,'MXN',1,'APLICADA',?,?,?)`,
+      idempotencia, k, idAnticipo, estacionId, noFactura, fecha, importe, referencia, observaciones, user.usuario);
+      const aplicacionId = Number(r.lastInsertRowid);
+      const saldoAplicado = await q.run(`UPDATE facturas_anticipo
+        SET importe_aplicado=ROUND(importe_aplicado+?,2),saldo_disponible=ROUND(saldo_disponible-?,2),
+          estado=CASE WHEN ROUND(saldo_disponible-?,2)<=? THEN 'CERRADA' ELSE 'PARCIALMENTE_APLICADA' END,
+          updated_at=datetime('now'),updated_by=?
+        WHERE id=? AND k_cliente=? AND estado IN ('ABIERTA','PARCIALMENTE_APLICADA') AND moneda='MXN' AND saldo_disponible>=?`,
+      importe, importe, importe, Q.EPS, user.usuario, idAnticipo, k, importe);
+      if (saldoAplicado.changes !== 1) throw new HttpError(409, 'El saldo del anticipo cambió; actualiza la pantalla e intenta de nuevo');
+      const updated = await q.get('SELECT importe_aplicado,saldo_disponible,estado FROM facturas_anticipo WHERE id=?', idAnticipo);
+      await L.bitacora(user, 'APLICACION_ANTICIPO_ALTA',
+        `AP-${aplicacionId} anticipo #${idAnticipo} factura ${noFactura}; saldo ${anticipo.saldo_disponible}->${updated.saldo_disponible}; aplicado $${importe}`, ip(req));
+      return { id: aplicacionId, ...updated };
+    });
+    return send(res, resultado.repetida ? 200 : 201, { ok: true, ...resultado });
+  }
+  if (m === 'POST' && (mt = p.match(/^\/api\/aplicaciones-anticipo\/(\d+)\/cancelar$/))) {
+    exigir(user, 'aplicaciones_anticipo_cancelar');
+    const id = Number(mt[1]), b = await readBody(req), motivo = txt(b.motivo, 500);
+    if (!motivo) throw new HttpError(400, 'Indica el motivo de cancelación');
+    const resultado = await tx(async () => {
+      const aplicacion = await q.get('SELECT * FROM aplicaciones_factura_anticipo WHERE id=?', id);
+      if (!aplicacion) throw new HttpError(404, 'Aplicación de Anticipo no encontrada');
+      await verificaCliente(user, aplicacion.k_cliente);
+      if (aplicacion.estado !== 'APLICADA') throw new HttpError(409, 'La aplicación ya está cancelada');
+      const anticipo = await q.get('SELECT * FROM facturas_anticipo WHERE id=?', aplicacion.factura_anticipo_id);
+      if (!anticipo || anticipo.estado === 'CANCELADA') throw new HttpError(409, 'No se puede restituir el saldo de una factura cancelada');
+      const importe = Number(aplicacion.importe_aplicado);
+      const nuevoAplicado = redondea(Number(anticipo.importe_aplicado) - importe);
+      const nuevoSaldo = redondea(Number(anticipo.saldo_disponible) + importe);
+      if (nuevoAplicado < -Q.EPS || nuevoSaldo > Number(anticipo.importe_original) + Q.EPS) {
+        throw new HttpError(409, 'Los saldos del anticipo son inconsistentes; no se canceló la aplicación');
+      }
+      const cambiaAnticipo = await q.run(`UPDATE facturas_anticipo SET importe_aplicado=?,saldo_disponible=?,
+        estado=CASE WHEN ?<=? THEN 'ABIERTA' ELSE 'PARCIALMENTE_APLICADA' END,
+        updated_at=datetime('now'),updated_by=? WHERE id=? AND estado<>'CANCELADA' AND importe_aplicado>=?`,
+      Math.max(0, nuevoAplicado), Math.min(Number(anticipo.importe_original), nuevoSaldo), Math.max(0, nuevoAplicado), Q.EPS, user.usuario,
+      anticipo.id, importe);
+      if (cambiaAnticipo.changes !== 1) throw new HttpError(409, 'El saldo del anticipo cambió; no se canceló la aplicación');
+      const cambiaAplicacion = await q.run(`UPDATE aplicaciones_factura_anticipo SET estado='CANCELADA',
+        fecha_cancelacion=datetime('now'),motivo_cancelacion=?,updated_at=datetime('now'),updated_by=?
+        WHERE id=? AND estado='APLICADA'`, motivo, user.usuario, id);
+      if (cambiaAplicacion.changes !== 1) throw new HttpError(409, 'La aplicación cambió; no se canceló');
+      const actualizado = await q.get('SELECT importe_aplicado,saldo_disponible,estado FROM facturas_anticipo WHERE id=?', anticipo.id);
+      await L.bitacora(user, 'APLICACION_ANTICIPO_CANCELAR',
+        `AP-${id} anticipo #${anticipo.id} saldo ${anticipo.saldo_disponible}->${actualizado.saldo_disponible}; motivo:${motivo}`, ip(req));
+      return { ...actualizado };
+    });
+    return send(res, 200, { ok: true, ...resultado });
+  }
+
+  // El módulo anterior se conserva solo como histórico; no acepta nuevos movimientos.
+  if ((m === 'POST' || m === 'DELETE') && (p === '/api/debito/movimientos' || /^\/api\/debito\/movimientos\/\d+$/.test(p))) {
+    throw new HttpError(410, 'Prepago fue reemplazado por Facturas de Anticipo y Aplicaciones de Anticipo');
+  }
+
+  // ----- debito prepago historico -----
   if (m === 'POST' && p === '/api/debito/movimientos') {
     exigir(user, 'debito');
     const b = await readBody(req);
@@ -1045,9 +1290,8 @@ async function api(req, res, url) {
     const email = txt(b.email, 254).toLowerCase();
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'Correo electrónico inválido');
     const telefono = txt(b.telefono, 40);
-    const modosCarga = ['Vales debito', 'Vales Credito', 'Flotilla debito', 'Flotilla Credito'];
-    const modoCarga = txt(b.modo_carga, 40) || null;
-    if (modoCarga && !modosCarga.includes(modoCarga)) throw new HttpError(400, 'Modo de carga inválido');
+    const modoCarga = normalizarModoCarga(txt(b.modo_carga, 40)) || null;
+    if (modoCarga && !modosCargaCliente.includes(modoCarga)) throw new HttpError(400, 'Modo de carga inválido');
     const limite = L.num(b.limite, 0), dias = Math.trunc(L.num(b.dias, 0));
     if (limite < 0 || limite > 1e9) throw new HttpError(400, 'Límite inválido');
     if (dias < 0 || dias > 365) throw new HttpError(400, 'Días de crédito inválidos (0-365)');
@@ -1085,17 +1329,16 @@ async function api(req, res, url) {
     const email = txt(b.email, 254).toLowerCase();
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'Correo electrónico inválido');
     const telefono = txt(b.telefono, 40);
-    const modosCarga = ['Vales debito', 'Vales Credito', 'Flotilla debito', 'Flotilla Credito'];
-    const modoCarga = b.modo_carga === undefined
+    const modoCarga = normalizarModoCarga(b.modo_carga === undefined
       ? (await q.get('SELECT modo_carga FROM cliente_extra WHERE k_cliente=?', k) || {}).modo_carga || null
-      : txt(b.modo_carga, 40) || null;
-    if (modoCarga && !modosCarga.includes(modoCarga)) throw new HttpError(400, 'Modo de carga inválido');
+      : txt(b.modo_carga, 40) || null);
+    if (modoCarga && !modosCargaCliente.includes(modoCarga)) throw new HttpError(400, 'Modo de carga inválido');
     const limite = L.num(b.limite, -1), dias = Math.trunc(L.num(b.dias, -1));
     if (limite < 0 || limite > 1e9) throw new HttpError(400, 'Límite inválido');
     if (dias < 0 || dias > 365) throw new HttpError(400, 'Días de crédito inválidos (0-365)');
     await tx(async () => {
       await q.run('UPDATE dim_cliente SET cliente=?,estacion_id=?,no_cliente=? WHERE k_cliente=?', nombre, estacionId, noCliente, k);
-      for (const table of ['fact_cxc', 'fact_factura', 'fact_debito', 'pagos', 'debito_app', 'fact_cxc_app']) {
+      for (const table of ['fact_cxc', 'fact_factura', 'fact_debito', 'pagos', 'debito_app', 'fact_cxc_app', 'aplicaciones_factura_anticipo']) {
         await q.run(`UPDATE ${table} SET estacion_id=? WHERE k_cliente=?`, estacionId, k);
       }
       await q.run(`INSERT INTO cliente_extra(k_cliente,rfc,cliente,estacion_id,no_cliente,email,telefono,modo_carga,editado_app)

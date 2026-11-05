@@ -221,185 +221,66 @@ server.listen(0, '127.0.0.1', async () => {
       k_cliente: k, no_factura: 'FACTURA-ESTADO-CTA', importe: 250, fecha_factura: '2026-10-22',
     });
     assert.equal(factura.status, 201, JSON.stringify(factura.data));
-    const recarga = await call('a', 'POST', '/api/debito/movimientos', {
-      k_cliente: k, tipo: 'ABONO', monto: 300, fecha: '2026-10-21', folio: 'RECARGA-ESTADO-CTA',
-      banco_id: bancoId, metodo: 'Transferencia SPEI',
-    });
-    assert.equal(recarga.status, 201, JSON.stringify(recarga.data));
     const pago = await call('a', 'POST', '/api/pagos', {
       k_cliente: k, estacion_id: 1, no_factura: 'FACTURA-ESTADO-CTA', monto: 100, fecha: '2026-10-22', metodo: 'Efectivo',
     });
     assert.equal(pago.status, 201, JSON.stringify(pago.data));
-    const consumo = await call('a', 'POST', '/api/debito/movimientos', {
-      k_cliente: k, tipo: 'CONSUMO', monto: 50, fecha: '2026-10-23', folio: 'CONSUMO-ESTADO-CTA',
-    });
-    assert.equal(consumo.status, 201, JSON.stringify(consumo.data));
 
     const ruta = '/api/cliente/estado-cuenta?k=' + enc(k);
     const completo = await call('a', 'GET', ruta);
     assert.equal(completo.status, 200);
-    for (const movimiento of ['DESPACHO-ESTADO-CTA', 'FACTURA-ESTADO-CTA', 'Pago CxC', 'RECARGA-ESTADO-CTA', 'CONSUMO-ESTADO-CTA'])
+    for (const movimiento of ['DESPACHO-ESTADO-CTA', 'FACTURA-ESTADO-CTA', 'Pago CxC'])
       assert.ok(completo.data.includes(movimiento), `No aparece ${movimiento} en el CSV`);
 
     const periodo = await call('a', 'GET', ruta + '&desde=2026-10-22&hasta=2026-10-22');
     assert.equal(periodo.status, 200);
     assert.ok(periodo.data.includes('Saldo al inicio del período'));
     assert.ok(periodo.data.includes('FACTURA-ESTADO-CTA') && periodo.data.includes('Pago CxC'));
-    assert.ok(!periodo.data.includes('DESPACHO-ESTADO-CTA') && !periodo.data.includes('RECARGA-ESTADO-CTA') && !periodo.data.includes('CONSUMO-ESTADO-CTA'));
+    assert.ok(!periodo.data.includes('DESPACHO-ESTADO-CTA'));
     assert.equal((await call('a', 'GET', ruta + '&desde=2026-10-23&hasta=2026-10-22')).status, 400);
     assert.ok((await call('a', 'GET', '/api/bitacora')).data.rows.some((row) => row.accion === 'EXPORT' && row.detalle.includes(`estado_cuenta ${k}`)));
 
     await L.q.run('DELETE FROM pagos WHERE k_cliente=?', k);
     await L.q.run('DELETE FROM fact_cxc_app WHERE k_cliente=?', k);
-    await L.q.run('DELETE FROM debito_app WHERE k_cliente=?', k);
     await L.q.run('DELETE FROM fact_cxc_app WHERE id=?', despacho.data.id);
     await L.q.run('DELETE FROM credito WHERE k_cliente=?', k);
     await L.q.run('DELETE FROM cliente_extra WHERE k_cliente=?', k);
     await L.q.run('DELETE FROM dim_cliente WHERE k_cliente=?', k);
   });
-  await t('prepago CxC consume solo lo aplicado y conserva el remanente', async () => {
-    const facturas = (await detalle()).abiertas.filter((factura) => factura.saldo >= 75).slice(0, 2);
-    assert.equal(facturas.length, 2, 'Se requieren dos facturas abiertas con saldo suficiente para probar la anulación parcial');
-    const [factura, facturaSegunda] = facturas;
-    const saldosIniciales = facturas.map((item) => item.saldo);
-    const abono = await call('a', 'POST', '/api/debito/movimientos', {
-      k_cliente: cliPagos.k_cliente, tipo: 'ABONO', monto: 500, fecha: '2026-10-20', folio: 'PREPAGO-CXC-TEST',
-      banco_id: bancoId, metodo: 'Transferencia SPEI',
-    });
-    assert.equal(abono.status, 201, JSON.stringify(abono.data));
-    const basePago = { k_cliente: cliPagos.k_cliente, fecha: '2026-10-20', metodo: 'Prepago', monto: 150, desde_prepago: 150, corte: '2026-10-13' };
-    const incompleto = await call('a', 'POST', '/api/pagos/lote', { ...basePago, aplicaciones: [{ no_factura: factura.no_factura, estacion_id: factura.estacion_id, monto: 100 }] });
-    assert.equal(incompleto.status, 400);
-    assert.equal((await call('a', 'GET', '/api/prepago/saldo?k=' + enc(cliPagos.k_cliente))).data.saldo_prepago, 500);
-    const r = await call('a', 'POST', '/api/pagos/lote', { ...basePago, referencia: 'APLICA-PREPAGO', aplicaciones: [
-      { no_factura: factura.no_factura, estacion_id: factura.estacion_id, monto: 75 },
-      { no_factura: facturaSegunda.no_factura, estacion_id: facturaSegunda.estacion_id, monto: 75 },
-    ] });
-    assert.equal(r.status, 201, JSON.stringify(r.data));
-    assert.equal(r.data.aplicado, 150);
-    assert.equal(r.data.sin_aplicar, 0);
-    assert.equal(r.data.prepago_saldo_anterior, 500);
-    assert.equal(r.data.prepago_saldo_remanente, 350);
-    assert.equal((await call('a', 'GET', '/api/prepago/saldo?k=' + enc(cliPagos.k_cliente))).data.saldo_prepago, 350);
-    assert.ok(!(await call('a', 'GET', '/api/pagos?q=APLICA-PREPAGO')).data.rows.some((p) => p.sin_aplicar === 1));
-    assert.equal(r.data.ids.length, 2);
-    for (const id of r.data.ids) {
-      const prepagoRef = await L.q.get('SELECT prepago_ref_id FROM pagos WHERE id=?', id);
-      assert.equal(prepagoRef.prepago_ref_id, r.data.prepago_debito_id - 1000000000);
-    }
-    const bitacora = (await call('a', 'GET', '/api/bitacora')).data.rows.find((row) => row.accion === 'PAGO' && row.detalle.includes('prepago_aplicado:$150.00'));
-    assert.ok(bitacora && bitacora.usuario === 'admin' && bitacora.detalle.includes('fecha:2026-10-20') && bitacora.detalle.includes('prepago_remanente:$350.00'));
-    assert.equal((await call('a', 'DELETE', '/api/debito/movimientos/' + r.data.prepago_debito_id)).status, 400);
-    const saldoFacturaAplicado = (await detalle()).abiertas.find((item) =>
-      item.no_factura === factura.no_factura && item.estacion_id === factura.estacion_id).saldo;
-    assert.equal(saldoFacturaAplicado, saldosIniciales[0] - 75);
-    const anulacion = await call('a', 'DELETE', '/api/pagos/' + r.data.ids[0]);
-    assert.equal(anulacion.status, 200, JSON.stringify(anulacion.data));
-    assert.equal(anulacion.data.prepago_restaurado, 75);
-    assert.equal((await call('a', 'GET', '/api/prepago/saldo?k=' + enc(cliPagos.k_cliente))).data.saldo_prepago, 425);
-    const clienteDespuesDeAnular = await detalle();
-    assert.equal(clienteDespuesDeAnular.cliente.saldo_favor, 425);
-    assert.equal(clienteDespuesDeAnular.abiertas.find((item) =>
-      item.no_factura === factura.no_factura && item.estacion_id === factura.estacion_id).saldo, saldosIniciales[0]);
-    assert.equal(clienteDespuesDeAnular.abiertas.find((item) =>
-      item.no_factura === facturaSegunda.no_factura && item.estacion_id === facturaSegunda.estacion_id).saldo, saldosIniciales[1] - 75);
-    assert.ok(clienteDespuesDeAnular.debito.some((movimiento) =>
-      movimiento.folio === `REVERSA-PAGO-${r.data.ids[0]}` && movimiento.tipo === 'RECARGA' && movimiento.abono === 75));
-    const reintentoAnulacion = await call('a', 'DELETE', '/api/pagos/' + r.data.ids[0]);
-    assert.equal(reintentoAnulacion.status, 200, JSON.stringify(reintentoAnulacion.data));
-    assert.equal(reintentoAnulacion.data.prepago_restaurado, 0);
-    assert.equal((await call('a', 'GET', '/api/prepago/saldo?k=' + enc(cliPagos.k_cliente))).data.saldo_prepago, 425);
-
-    const pagoDuplicado = await call('a', 'POST', '/api/pagos', {
-      k_cliente: cliPagos.k_cliente, estacion_id: facturaSegunda.estacion_id, no_factura: facturaSegunda.no_factura,
-      monto: 25, desde_prepago: 25, fecha: '2026-10-20', metodo: 'Prepago', corte: '2026-10-13',
-    });
-    assert.equal(pagoDuplicado.status, 201, JSON.stringify(pagoDuplicado.data));
-    const prepagoDuplicado = await L.q.get('SELECT prepago_ref_id FROM pagos WHERE id=?', pagoDuplicado.data.ids[0]);
-    assert.ok(prepagoDuplicado.prepago_ref_id);
-    await L.q.run('UPDATE pagos SET prepago_ref_id=NULL, anulado=1 WHERE id=?', r.data.ids[1]);
-    const pagoHuerfano = (await call('a', 'GET', '/api/pagos?q=APLICA-PREPAGO')).data.rows
-      .find((pago) => pago.id === r.data.ids[1]);
-    assert.equal(pagoHuerfano.desde_prepago, 1);
-    assert.equal(pagoHuerfano.prepago_devuelto, 0);
-    const anulacionLegacy = await call('a', 'DELETE', '/api/pagos/' + r.data.ids[1]);
-    assert.equal(anulacionLegacy.status, 200, JSON.stringify(anulacionLegacy.data));
-    assert.equal(anulacionLegacy.data.prepago_restaurado, 75);
-    assert.equal(anulacionLegacy.data.ya_anulado, true);
-    assert.equal((await call('a', 'GET', '/api/prepago/saldo?k=' + enc(cliPagos.k_cliente))).data.saldo_prepago, 475);
-    assert.equal((await detalle()).cliente.saldo_favor, 475);
-    const reintentoLegacy = await call('a', 'DELETE', '/api/pagos/' + r.data.ids[1]);
-    assert.equal(reintentoLegacy.status, 200, JSON.stringify(reintentoLegacy.data));
-    assert.equal(reintentoLegacy.data.prepago_restaurado, 0);
-    assert.equal((await call('a', 'GET', '/api/prepago/saldo?k=' + enc(cliPagos.k_cliente))).data.saldo_prepago, 475);
-    const pagoListadoReparado = (await call('a', 'GET', '/api/pagos?q=APLICA-PREPAGO')).data.rows
-      .find((pago) => pago.id === r.data.ids[1]);
-    assert.equal(pagoListadoReparado.desde_prepago, 1);
-    assert.equal(pagoListadoReparado.prepago_devuelto, 1);
-    assert.equal((await call('a', 'DELETE', '/api/pagos/' + pagoDuplicado.data.ids[0])).status, 200);
-    assert.equal((await call('a', 'GET', '/api/prepago/saldo?k=' + enc(cliPagos.k_cliente))).data.saldo_prepago, 500);
-    assert.equal((await detalle()).cliente.saldo_favor, 500);
-    const devolucion = (await call('a', 'GET', '/api/debito/movimientos?k=' + enc(cliPagos.k_cliente))).data.rows
-      .find((movimiento) => movimiento.folio === `REVERSA-PAGO-${r.data.ids[0]}`);
-    assert.ok(devolucion && devolucion.abono === 75);
-    assert.equal((await call('a', 'DELETE', '/api/debito/movimientos/' + devolucion.id)).status, 400);
-    const devolucionLegacy = (await call('a', 'GET', '/api/debito/movimientos?k=' + enc(cliPagos.k_cliente))).data.rows
-      .find((movimiento) => movimiento.folio === `REVERSA-PAGO-${r.data.ids[1]}`);
-    assert.ok(devolucionLegacy && devolucionLegacy.abono === 75);
-    const devolucionDuplicada = (await call('a', 'GET', '/api/debito/movimientos?k=' + enc(cliPagos.k_cliente))).data.rows
-      .find((movimiento) => movimiento.folio === `REVERSA-PAGO-${pagoDuplicado.data.ids[0]}`);
-    assert.ok(devolucionDuplicada && devolucionDuplicada.abono === 25);
-    await L.q.run('DELETE FROM pagos WHERE id IN (?,?,?)', ...r.data.ids, ...pagoDuplicado.data.ids);
-    await L.q.run('DELETE FROM debito_app WHERE id=?', r.data.prepago_debito_id - 1000000000);
-    await L.q.run('DELETE FROM debito_app WHERE id=?', devolucion.id - 1000000000);
-    await L.q.run('DELETE FROM debito_app WHERE id=?', devolucionLegacy.id - 1000000000);
-    await L.q.run('DELETE FROM debito_app WHERE id=?', devolucionDuplicada.id - 1000000000);
-    assert.equal((await call('a', 'DELETE', '/api/debito/movimientos/' + abono.data.id)).status, 200);
-  });
-
-  // ---- debito prepago ----
-  const favor = (await call('a', 'GET', '/api/debito?signo=favor')).data.rows[0];
-  await t('débito: abono y consumo actualizan saldo, KPI y movimientos', async () => {
-    const s0 = favor.saldo;
-    const abono = { k_cliente: favor.k_cliente, tipo: 'ABONO', monto: 500, fecha: '2026-10-20', folio: 'TKT-1' };
-    assert.equal((await call('a', 'POST', '/api/debito/movimientos', abono)).status, 400);
-    assert.equal((await call('a', 'POST', '/api/debito/movimientos', { ...abono, banco_id: 999999 })).status, 400);
-    assert.equal((await call('a', 'POST', '/api/debito/movimientos', { ...abono, banco_id: bancoId })).status, 400);
-    assert.equal((await call('a', 'POST', '/api/debito/movimientos', { ...abono, banco_id: bancoId, metodo: 'Método inválido' })).status, 400);
-    const a = await call('a', 'POST', '/api/debito/movimientos', { ...abono, banco_id: bancoId, metodo: 'Transferencia SPEI' });
-    assert.equal(a.status, 201, JSON.stringify(a.data)); assert.equal(Math.round(a.data.saldo_nuevo), Math.round(s0 + 500));
-    const c = await call('a', 'POST', '/api/debito/movimientos', {
-      k_cliente: favor.k_cliente, tipo: 'CONSUMO', monto: 200, fecha: '2026-10-20', folio: 'TKT-2',
-      banco_id: bancoId, metodo: 'Transferencia SPEI',
-    });
-    assert.equal(Math.round(c.data.saldo_nuevo), Math.round(s0 + 300));
-    assert.equal(Math.round((await call('a', 'GET', '/api/dashboard')).data.kpis.saldo_a_favor), Math.round(dash.kpis.saldo_a_favor + 300));
-    const mv = (await call('a', 'GET', '/api/debito/movimientos?k=' + enc(favor.k_cliente))).data.rows;
-    assert.ok(mv.some((m) => m.folio === 'TKT-1' && m.origen === 'app' && m.metodo === 'Transferencia SPEI' && m.banco === 'BBVA'));
-    assert.ok(mv.some((m) => m.folio === 'TKT-2' && m.origen === 'app' && m.metodo === 'Transferencia SPEI' && m.banco === 'BBVA'));
-    const detalleDebito = (await call('a', 'GET', '/api/cliente?k=' + enc(favor.k_cliente))).data.debito;
-    assert.ok(detalleDebito.some((m) => m.folio === 'TKT-1' && m.metodo === 'Transferencia SPEI' && m.banco === 'BBVA'));
-    assert.ok(detalleDebito.some((m) => m.folio === 'TKT-2' && m.metodo === 'Transferencia SPEI' && m.banco === 'BBVA'));
-    assert.equal((await call('a', 'DELETE', '/api/debito/movimientos/' + a.data.id)).status, 200);
-    assert.equal((await call('a', 'DELETE', '/api/debito/movimientos/' + c.data.id)).status, 200);
-    assert.equal(Math.round((await call('a', 'GET', '/api/debito?signo=favor')).data.rows.find((x) => x.k_cliente === favor.k_cliente).saldo), Math.round(s0));
-  });
-  await t('débito: consumo mayor al saldo avisa; validaciones', async () => {
-    const r = await call('a', 'POST', '/api/debito/movimientos', { k_cliente: favor.k_cliente, tipo: 'CONSUMO', monto: favor.saldo + 1000, fecha: '2026-10-20', folio: 'X' });
-    assert.equal(r.status, 201); assert.ok(r.data.advertencia); await call('a', 'DELETE', '/api/debito/movimientos/' + r.data.id);
-    for (const b of [{ tipo: 'CONSUMO', monto: 0, fecha: '2026-10-20', folio: 'a' }, { tipo: 'OTRO', monto: 5, fecha: '2026-10-20', folio: 'a' }, { tipo: 'CONSUMO', monto: 5, fecha: '2026-10-20', folio: '' }, { tipo: 'CONSUMO', monto: 5, fecha: '2099-01-01', folio: 'a' }])
-      assert.equal((await call('a', 'POST', '/api/debito/movimientos', { k_cliente: favor.k_cliente, ...b })).status, 400);
-    assert.equal((await call('a', 'DELETE', '/api/debito/movimientos/5')).status, 404);
+  await t('Prepago anterior: bloquea nuevas operaciones y conserva consultas hist?ricas', async () => {
+    const cliente = await L.q.get('SELECT k_cliente FROM dim_cliente LIMIT 1');
+    const movimiento = { k_cliente: cliente.k_cliente, tipo: 'ABONO', monto: 500, fecha: L.hoyISO(), folio: 'PREPAGO-RETIRADO' };
+    assert.equal((await call('a', 'POST', '/api/debito/movimientos', movimiento)).status, 410);
+    assert.equal((await call('a', 'DELETE', '/api/debito/movimientos/1000000001')).status, 410);
+    assert.equal((await call('a', 'POST', '/api/pagos', {
+      k_cliente: cliente.k_cliente, fecha: L.hoyISO(), no_factura: 'LEGACY', monto: 1, desde_prepago: 1,
+    })).status, 410);
+    assert.equal((await call('a', 'POST', '/api/pagos/lote', {
+      k_cliente: cliente.k_cliente, fecha: L.hoyISO(), metodo: 'Prepago', monto: 1,
+    })).status, 410);
+    assert.equal((await call('a', 'GET', '/api/debito/movimientos?k=' + enc(cliente.k_cliente))).status, 200);
   });
 
   // ---- catalogo / credito / gestiones ----
   await t('catálogo: alta de cliente, duplicado, RFC inválido y crédito', async () => {
-    const r = await call('a', 'POST', '/api/clientes', { cliente: 'Cliente Prueba SA', estacion_id: 1, no_cliente: 'P-1', rfc: 'abc010203xy1', limite: 50000, dias: 15, email: 'contacto@prueba.mx', telefono: '555-1234', modo_carga: 'Vales debito' });
+    const r = await call('a', 'POST', '/api/clientes', { cliente: 'Cliente Prueba SA', estacion_id: 1, no_cliente: 'P-1', rfc: 'abc010203xy1', limite: 50000, dias: 15, email: 'contacto@prueba.mx', telefono: '555-1234', modo_carga: 'Vales débito' });
     assert.equal(r.status, 201, JSON.stringify(r.data));
     let d = (await call('a', 'GET', '/api/cliente?k=' + enc(r.data.k_cliente))).data.cliente; assert.equal(d.limite, 50000); assert.equal(d.dias_credito, 15); assert.equal(d.rfc, 'ABC010203XY1');
-    assert.equal(d.email, 'contacto@prueba.mx'); assert.equal(d.telefono, '555-1234'); assert.equal(d.modo_carga, 'Vales debito');
+    assert.equal(d.email, 'contacto@prueba.mx'); assert.equal(d.telefono, '555-1234'); assert.equal(d.modo_carga, 'Vales débito');
     const listaClienteModo = await call('a', 'GET', '/api/clientes?q=Cliente Prueba SA');
-    assert.equal(listaClienteModo.data.rows[0].modo_carga, 'Vales debito');
+    assert.equal(listaClienteModo.data.rows[0].modo_carga, 'Vales débito');
+    for (const modo of ['Vales débito', 'Vales crédito', 'Flotilla débito', 'Flotilla crédito', 'Código de barras', 'Firma autorizada', 'Cupón de carga']) {
+      const actualizaModo = await call('a', 'PUT', '/api/clientes', {
+        k_cliente: r.data.k_cliente, cliente: 'Cliente Prueba SA', estacion_id: 1, limite: 50000, dias: 15, modo_carga: modo,
+      });
+      assert.equal(actualizaModo.status, 200, `No se aceptó el modo de carga ${modo}`);
+      assert.equal((await call('a', 'GET', '/api/cliente?k=' + enc(r.data.k_cliente))).data.cliente.modo_carga, modo);
+    }
+    const compatibilidadModo = await call('a', 'PUT', '/api/clientes', {
+      k_cliente: r.data.k_cliente, cliente: 'Cliente Prueba SA', estacion_id: 1, limite: 50000, dias: 15, modo_carga: 'Vales debito',
+    });
+    assert.equal(compatibilidadModo.status, 200);
+    assert.equal((await call('a', 'GET', '/api/cliente?k=' + enc(r.data.k_cliente))).data.cliente.modo_carga, 'Vales débito');
     for (const sort of ['no', 'cliente', 'estacion', 'email', 'telefono', 'modo_carga', 'limite', 'dias_credito', 'saldo', 'vencido', 'uso', 'favor', 'riesgo']) {
       const ordenada = await call('a', 'GET', '/api/clientes?q=Cliente Prueba SA&sort=' + sort + '&dir=asc');
       assert.equal(ordenada.status, 200, `No se pudo ordenar por ${sort}`);
@@ -417,12 +298,12 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal(facturaCambioEstacion.status, 201, JSON.stringify(facturaCambioEstacion.data));
     assert.equal((await call('a', 'PUT', '/api/clientes', {
       k_cliente: r.data.k_cliente, cliente: 'Cliente Prueba SA Actualizado', estacion_id: 2, no_cliente: 'P-2',
-      rfc: 'abc010203xy1', limite: 75000, dias: 18, email: 'actualizado@prueba.mx', telefono: '555-9876', modo_carga: 'Flotilla Credito',
+      rfc: 'abc010203xy1', limite: 75000, dias: 18, email: 'actualizado@prueba.mx', telefono: '555-9876', modo_carga: 'Flotilla crédito',
     })).status, 200);
     d = (await call('a', 'GET', '/api/cliente?k=' + enc(r.data.k_cliente))).data.cliente;
     assert.equal(d.cliente, 'Cliente Prueba SA Actualizado'); assert.equal(d.estacion_id, 2);
     assert.equal(d.limite, 75000); assert.equal(d.dias_credito, 18);
-    assert.equal(d.email, 'actualizado@prueba.mx'); assert.equal(d.telefono, '555-9876'); assert.equal(d.modo_carga, 'Flotilla Credito');
+    assert.equal(d.email, 'actualizado@prueba.mx'); assert.equal(d.telefono, '555-9876'); assert.equal(d.modo_carga, 'Flotilla crédito');
     assert.equal((await call('a', 'GET', '/api/facturas?q=FACTURA-MOVIMIENTO-ESTACION&estado=todas')).data.rows[0].estacion_id, 2);
     assert.equal((await call('a', 'GET', '/api/clientes?estacion=2&q=Cliente Prueba SA Actualizado')).data.total, 1);
     assert.equal((await call('a', 'GET', '/api/clientes?q=ABC010203')).data.total, 1);
@@ -431,6 +312,122 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal((await call('a', 'GET', '/api/cliente?k=' + enc(r.data.k_cliente))).data.cliente.email, 'actualizado@prueba.mx');
     assert.equal((await call('a', 'PUT', '/api/credito', { k_cliente: r.data.k_cliente, limite: -5, dias: 1 })).status, 400);
     await L.q.run('DELETE FROM fact_cxc_app WHERE id=?', facturaCambioEstacion.data.id);
+  });
+
+  await t('anticipos: alta, aplicación, límites, cancelación y saldo CxC', async () => {
+    const cliente = await L.q.get('SELECT k_cliente,estacion_id FROM dim_cliente ORDER BY k_cliente LIMIT 1');
+    const fecha = L.hoyISO(), sufijo = String(process.pid);
+    const factura1 = `ANTICIPO-CXC-1-${sufijo}`, factura2 = `ANTICIPO-CXC-2-${sufijo}`;
+    const cxc1 = await L.q.run(`INSERT INTO fact_cxc_app
+      (fecha_despacho,despacho,importe,abono,k_cliente,estacion_id,estatus,grupo,fecha_factura,no_factura)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    fecha, factura1, 20000, 0, cliente.k_cliente, cliente.estacion_id, 'POR PAGAR', 'PRUEBA', fecha, factura1);
+    const cxc2 = await L.q.run(`INSERT INTO fact_cxc_app
+      (fecha_despacho,despacho,importe,abono,k_cliente,estacion_id,estatus,grupo,fecha_factura,no_factura)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    fecha, factura2, 40000, 0, cliente.k_cliente, cliente.estacion_id, 'POR PAGAR', 'PRUEBA', fecha, factura2);
+    let anticipoId, usdId, aplicacion1, aplicacion2;
+    try {
+      const alta = await call('a', 'POST', '/api/facturas-anticipo', {
+        k_cliente: cliente.k_cliente, serie: 'ANT', folio: `ANT-${sufijo}`,
+        uuid_fiscal: '8e560e88-2f55-4a56-a9b2-b448e7a13784', fecha_factura: fecha, importe_original: 50000,
+      });
+      assert.equal(alta.status, 201, JSON.stringify(alta.data));
+      anticipoId = alta.data.id;
+      assert.equal(alta.data.saldo_disponible, 50000);
+      assert.equal((await call('a', 'POST', '/api/facturas-anticipo', {
+        k_cliente: cliente.k_cliente, serie: 'ANT', folio: `ANT-${sufijo}`, fecha_factura: fecha, importe_original: 1,
+      })).status, 409);
+      const invalida = await call('a', 'POST', '/api/facturas-anticipo', {
+        k_cliente: cliente.k_cliente, folio: `ANT-INVALIDA-${sufijo}`, fecha_factura: fecha, importe_original: 0,
+      });
+      assert.equal(invalida.status, 400);
+
+      const usd = await call('a', 'POST', '/api/facturas-anticipo', {
+        k_cliente: cliente.k_cliente, folio: `ANT-USD-${sufijo}`, fecha_factura: fecha,
+        importe_original: 100, moneda: 'USD', tipo_cambio: 17,
+      });
+      assert.equal(usd.status, 201, JSON.stringify(usd.data));
+      usdId = usd.data.id;
+      const opciones = await call('a', 'GET', `/api/aplicaciones-anticipo/opciones?k=${enc(cliente.k_cliente)}`);
+      assert.equal(opciones.status, 200, JSON.stringify(opciones.data));
+      assert.ok(opciones.data.anticipos.some((a) => a.id === anticipoId));
+      assert.ok(!opciones.data.anticipos.some((a) => a.id === usdId));
+      assert.equal((await call('a', 'POST', '/api/aplicaciones-anticipo', {
+        k_cliente: cliente.k_cliente, factura_anticipo_id: usdId, estacion_id: cliente.estacion_id,
+        no_factura: factura1, fecha_aplicacion: fecha, importe_aplicado: 1, idempotencia: `anticipo-usd-${sufijo}`,
+      })).status, 400, 'No debe aplicar anticipos en monedas no soportadas por la CxC');
+      const otroCliente = await L.q.get('SELECT k_cliente,estacion_id FROM dim_cliente WHERE k_cliente<>? LIMIT 1', cliente.k_cliente);
+      assert.equal((await call('a', 'POST', '/api/aplicaciones-anticipo', {
+        k_cliente: otroCliente.k_cliente, factura_anticipo_id: anticipoId, estacion_id: otroCliente.estacion_id,
+        no_factura: factura1, fecha_aplicacion: fecha, importe_aplicado: 1, idempotencia: `anticipo-cliente-${sufijo}`,
+      })).status, 400, 'No debe aplicar una factura de anticipo a otro cliente');
+      const detalle = await call('a', 'GET', `/api/facturas-anticipo/${anticipoId}`);
+      assert.equal(detalle.status, 200, JSON.stringify(detalle.data));
+      assert.equal(detalle.data.created_by, 'admin');
+
+      const body1 = {
+        k_cliente: cliente.k_cliente, factura_anticipo_id: anticipoId, estacion_id: cliente.estacion_id,
+        no_factura: factura1, fecha_aplicacion: fecha, importe_aplicado: 15000, idempotencia: `anticipo-test-1-${sufijo}`,
+      };
+      const app1 = await call('a', 'POST', '/api/aplicaciones-anticipo', body1);
+      assert.equal(app1.status, 201, JSON.stringify(app1.data));
+      aplicacion1 = app1.data.id;
+      assert.equal(app1.data.saldo_disponible, 35000);
+      const repetida = await call('a', 'POST', '/api/aplicaciones-anticipo', body1);
+      assert.equal(repetida.status, 200, JSON.stringify(repetida.data));
+      assert.equal(repetida.data.id, aplicacion1);
+      assert.equal(repetida.data.repetida, true);
+      assert.equal((await call('a', 'POST', '/api/aplicaciones-anticipo', {
+        ...body1, importe_aplicado: 14999, idempotencia: `anticipo-test-1-${sufijo}`,
+      })).status, 409);
+      assert.equal((await call('a', 'POST', '/api/aplicaciones-anticipo', {
+        ...body1, importe_aplicado: 5001, idempotencia: `anticipo-test-1b-${sufijo}`,
+      })).status, 400, 'No debe exceder el saldo de la factura');
+      assert.equal((await call('a', 'POST', '/api/aplicaciones-anticipo', {
+        ...body1, no_factura: factura2, importe_aplicado: 35001, idempotencia: `anticipo-test-1c-${sufijo}`,
+      })).status, 400, 'No debe exceder el saldo del anticipo');
+      assert.equal((await call('a', 'POST', '/api/facturas-anticipo/' + anticipoId + '/cancelar', { motivo: 'Prueba' })).status, 409);
+
+      const body2 = {
+        k_cliente: cliente.k_cliente, factura_anticipo_id: anticipoId, estacion_id: cliente.estacion_id,
+        no_factura: factura2, fecha_aplicacion: fecha, importe_aplicado: 35000, idempotencia: `anticipo-test-2-${sufijo}`,
+      };
+      const app2 = await call('a', 'POST', '/api/aplicaciones-anticipo', body2);
+      assert.equal(app2.status, 201, JSON.stringify(app2.data));
+      aplicacion2 = app2.data.id;
+      assert.equal(app2.data.estado, 'CERRADA');
+      const Q = require('./queries');
+      const saldoAplicado = await L.q.get(`SELECT saldo FROM ${Q.FAC(fecha)}
+        WHERE k_cliente=? AND estacion_id=? AND no_factura=?`, cliente.k_cliente, cliente.estacion_id, factura1);
+      assert.equal(saldoAplicado.saldo, 5000);
+      const detalleAplicaciones = await call('a', 'GET', `/api/facturas-anticipo/${anticipoId}`);
+      assert.equal(detalleAplicaciones.data.aplicaciones.length, 2);
+      assert.ok(detalleAplicaciones.data.aplicaciones.every((a) => a.usuario === 'admin'));
+      assert.equal((await call('a', 'PUT', '/api/facturas-anticipo/' + anticipoId, {
+        folio: `ANT-EDIT-${sufijo}`, fecha_factura: fecha, importe_original: 50000,
+      })).status, 409, 'Debe conservar el historial de aplicaciones');
+
+      assert.equal((await call('a', 'POST', '/api/aplicaciones-anticipo/' + aplicacion1 + '/cancelar', { motivo: 'Corrección de prueba' })).status, 200);
+      const trasAnular = await call('a', 'GET', `/api/facturas-anticipo/${anticipoId}`);
+      assert.equal(trasAnular.data.saldo_disponible, 15000);
+      assert.equal(trasAnular.data.importe_aplicado, 35000);
+      assert.equal((await call('a', 'POST', '/api/aplicaciones-anticipo/' + aplicacion1 + '/cancelar', { motivo: 'Duplicado' })).status, 409);
+      assert.equal((await call('a', 'POST', '/api/aplicaciones-anticipo/' + aplicacion2 + '/cancelar', { motivo: 'Corrección de prueba' })).status, 200);
+      const saldoRestaurado = await L.q.get(`SELECT saldo FROM ${Q.FAC(fecha)}
+        WHERE k_cliente=? AND estacion_id=? AND no_factura=?`, cliente.k_cliente, cliente.estacion_id, factura1);
+      assert.equal(saldoRestaurado.saldo, 20000);
+      assert.equal((await call('a', 'POST', '/api/facturas-anticipo/' + anticipoId + '/cancelar', { motivo: 'Anticipo de prueba' })).status, 200);
+      assert.equal((await call('a', 'GET', `/api/facturas-anticipo/${anticipoId}`)).data.estado, 'CANCELADA');
+      assert.equal((await call('a', 'POST', '/api/aplicaciones-anticipo', {
+        ...body1, idempotencia: `anticipo-test-tras-cancelar-${sufijo}`,
+      })).status, 400);
+    } finally {
+      if (anticipoId) await L.q.run('DELETE FROM aplicaciones_factura_anticipo WHERE factura_anticipo_id=?', anticipoId);
+      if (usdId) await L.q.run('DELETE FROM facturas_anticipo WHERE id=?', usdId);
+      if (anticipoId) await L.q.run('DELETE FROM facturas_anticipo WHERE id=?', anticipoId);
+      await L.q.run('DELETE FROM fact_cxc_app WHERE id IN (?,?)', cxc1.lastInsertRowid, cxc2.lastInsertRowid);
+    }
   });
   await t('gestión con promesa genera alerta', async () => {
     assert.equal((await call('a', 'POST', '/api/gestiones', { k_cliente: cliPagos.k_cliente, tipo: 'Llamada', resultado: 'Promesa de pago', fecha: '2026-10-10', promesa_fecha: '2026-10-12', promesa_monto: 500, notas: 'prueba' })).status, 201);
@@ -455,7 +452,7 @@ server.listen(0, '127.0.0.1', async () => {
     const otro = (await call('a', 'GET', '/api/clientes?estacion=2&size=10')).data.rows[0];
     assert.equal((await call('g', 'GET', '/api/cliente?k=' + enc(otro.k_cliente))).status, 403);
     assert.equal((await call('g', 'PUT', '/api/clientes', { k_cliente: otro.k_cliente, cliente: otro.cliente, estacion_id: 1, limite: 1, dias: 1 })).status, 403);
-    assert.equal((await call('g', 'POST', '/api/debito/movimientos', { k_cliente: otro.k_cliente, tipo: 'ABONO', monto: 1, fecha: '2026-10-20', folio: 'z' })).status, 403);
+    assert.equal((await call('g', 'POST', '/api/debito/movimientos', { k_cliente: otro.k_cliente, tipo: 'ABONO', monto: 1, fecha: '2026-10-20', folio: 'z' })).status, 410);
     assert.equal((await call('g', 'POST', '/api/cartera/facturas', { k_cliente: otro.k_cliente, no_factura: 'FUERA-ESTACION', importe: 1, fecha_factura: '2026-10-20' })).status, 403);
     assert.equal((await call('g', 'PUT', '/api/credito', { k_cliente: otro.k_cliente, limite: 1, dias: 1 })).status, 403);
     const nuevo = await call('g', 'POST', '/api/clientes', { cliente: 'Cliente del gestor', estacion_id: 2, limite: 0, dias: 0 }); assert.equal(nuevo.status, 201); assert.ok(nuevo.data.k_cliente.startsWith((await call('a', 'GET', '/api/catalogos')).data.estaciones.find((e) => e.id === 1).nombre));
@@ -470,7 +467,7 @@ server.listen(0, '127.0.0.1', async () => {
     await call('l', 'POST', '/api/login', { usuario: 'lector', password: tp }); await call('l', 'POST', '/api/cambiar-password', { actual: tp, nueva: 'Lector2026x' });
     assert.equal((await call('l', 'GET', '/api/dashboard')).status, 200);
     assert.equal((await call('l', 'POST', '/api/pagos', { k_cliente: cliPagos.k_cliente })).status, 403);
-    assert.equal((await call('l', 'POST', '/api/debito/movimientos', { k_cliente: cliPagos.k_cliente })).status, 403);
+    assert.equal((await call('l', 'POST', '/api/debito/movimientos', { k_cliente: cliPagos.k_cliente })).status, 410);
     assert.equal((await call('l', 'POST', '/api/clientes', { cliente: 'x' })).status, 403);
     assert.equal((await call('l', 'PUT', '/api/bancos/1', { nombre: 'Banco No Autorizado' })).status, 403);
   });
@@ -529,11 +526,11 @@ server.listen(0, '127.0.0.1', async () => {
     assert.deepEqual([...profile.estaciones].sort((a, b) => a - b), [...asignadas].sort((a, b) => a - b));
     const catalogoSupervisor = (await call('s', 'GET', '/api/catalogos')).data;
     assert.deepEqual(catalogoSupervisor.estaciones.map((station) => station.id).sort((a, b) => a - b), [...asignadas].sort((a, b) => a - b));
-    for (const permission of ['anular_prepago', 'editar_despacho', 'anular_pago']) assert.ok(profile.permisos.includes(permission));
+    for (const permission of ['anticipos_cancelar', 'aplicaciones_anticipo_cancelar', 'editar_despacho', 'anular_pago']) assert.ok(profile.permisos.includes(permission));
     for (const permission of ['pagos', 'debito', 'facturas', 'usuarios']) assert.ok(!profile.permisos.includes(permission));
     assert.equal((await call('s', 'GET', '/api/usuarios')).status, 403);
     assert.equal((await call('s', 'POST', '/api/pagos', { k_cliente: cliPagos.k_cliente })).status, 403);
-    assert.equal((await call('s', 'POST', '/api/debito/movimientos', { k_cliente: cliPagos.k_cliente })).status, 403);
+    assert.equal((await call('s', 'POST', '/api/debito/movimientos', { k_cliente: cliPagos.k_cliente })).status, 410);
 
     const k = (await call('a', 'POST', '/api/clientes', {
       cliente: `Cliente Supervisor ${process.pid}`, estacion_id: asignadas[0], limite: 0, dias: 0,
@@ -580,16 +577,10 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal(pendienteSinProducto.status, 201, JSON.stringify(pendienteSinProducto.data));
     assert.equal(pendienteSinProducto.data.producto, null, 'Producto debe ser opcional');
 
-    const abono = await call('a', 'POST', '/api/debito/movimientos', {
+    assert.equal((await call('a', 'POST', '/api/debito/movimientos', {
       k_cliente: k, tipo: 'ABONO', monto: 100, fecha: '2026-10-25', folio: `ABONO-SUP-${process.pid}`, metodo: 'Efectivo',
-    });
-    assert.equal(abono.status, 201, JSON.stringify(abono.data));
-    assert.equal((await call('s', 'DELETE', '/api/debito/movimientos/' + abono.data.id)).status, 200);
-    const consumo = await call('a', 'POST', '/api/debito/movimientos', {
-      k_cliente: k, tipo: 'CONSUMO', monto: 20, fecha: '2026-10-25', folio: `CONSUMO-SUP-${process.pid}`,
-    });
-    assert.equal(consumo.status, 201, JSON.stringify(consumo.data));
-    assert.equal((await call('s', 'DELETE', '/api/debito/movimientos/' + consumo.data.id)).status, 403);
+    })).status, 410);
+    assert.equal((await call('s', 'DELETE', '/api/debito/movimientos/1000000001')).status, 410);
 
     const factura = await call('a', 'POST', '/api/cartera/facturas', {
       k_cliente: k, no_factura: `FAC-SUP-${process.pid}`, importe: 200, fecha_factura: '2026-10-25',
@@ -602,7 +593,6 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal(pago.status, 201, JSON.stringify(pago.data));
     assert.equal((await call('s', 'DELETE', '/api/pagos/' + pago.data.ids[0])).status, 200);
     const bitacora = (await call('a', 'GET', '/api/bitacora')).data.rows;
-    assert.ok(bitacora.some((row) => row.usuario === 'supervisor1' && row.accion === 'DEBITO_ANULADO'));
     assert.ok(bitacora.some((row) => row.usuario === 'supervisor1' && row.accion === 'PAGO_ANULADO'));
     assert.ok(bitacora.some((row) => row.usuario === 'supervisor1' && row.accion === 'DESPACHO_EDITA'));
     const estacionesNoAsignadas = estaciones.filter((stationId) => !asignadas.includes(stationId));

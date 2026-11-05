@@ -28,7 +28,8 @@ window.CG = (() => {
 
   const BADGE = { PAGADA: 'b-ok', VENCIDA: 'b-bad', 'POR VENCER': 'b-info', ABONADA: 'b-warn', 'SIN VENCIMIENTO': 'b-warn',
     EXCEDIDO: 'b-bad', 'SIN LÍMITE': 'b-warn', OK: 'b-ok', Abierta: 'b-info', Cumplida: 'b-ok', Incumplida: 'b-bad', Cerrada: 'b-mut',
-    RECARGA: 'b-ok', ABONO: 'b-ok', CONSUMO: 'b-warn' };
+    RECARGA: 'b-ok', ABONO: 'b-ok', CONSUMO: 'b-warn', ABIERTA: 'b-info', PARCIALMENTE_APLICADA: 'b-warn',
+    CERRADA: 'b-mut', CANCELADA: 'b-bad', APLICADA: 'b-ok' };
   const badge = (t) => html`<span class="badge ${BADGE[t] || 'b-mut'}">${t === 'RECARGA' ? 'ABONO' : t}</span>`;
   const diasCell = (d) => (d > 0 ? html`<span class="neg strong">${d}</span>` : html`<span class="mut">al corriente</span>`);
 

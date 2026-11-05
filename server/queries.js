@@ -43,7 +43,8 @@ function FAC(corte) {
         ELSE f.fecha_vencimiento END AS fecha_vencimiento,
       f.primer_despacho, f.ultimo_despacho, f.despachos, f.importe, f.abono, f.abierta, f.editable, f.app_id,
       COALESCE(p.pagos,0) AS pagos_app,
-      CASE WHEN f.abierta=1 THEN MAX(f.importe-f.abono-COALESCE(p.pagos,0),0) ELSE 0 END AS saldo,
+      COALESCE(a.aplicaciones,0) AS aplicaciones_anticipo,
+      CASE WHEN f.abierta=1 THEN MAX(f.importe-f.abono-COALESCE(p.pagos,0)-COALESCE(a.aplicaciones,0),0) ELSE 0 END AS saldo,
       CASE WHEN f.fecha_factura IS NULL AND f.fecha_vencimiento IS NULL THEN 0
            ELSE CAST(julianday('${corte}')-julianday(CASE WHEN f.fecha_factura IS NOT NULL
              THEN date(f.fecha_factura, printf('%+d days', COALESCE(cr.dias,0)))
@@ -52,13 +53,16 @@ function FAC(corte) {
     LEFT JOIN credito cr ON cr.k_cliente=f.k_cliente
     LEFT JOIN (SELECT k_cliente,estacion_id,no_factura,SUM(monto) pagos FROM pagos
                WHERE anulado=0 AND conciliado=0 GROUP BY 1,2,3) p
-      ON p.k_cliente=f.k_cliente AND p.estacion_id=f.estacion_id AND p.no_factura=f.no_factura)`;
+      ON p.k_cliente=f.k_cliente AND p.estacion_id=f.estacion_id AND p.no_factura=f.no_factura
+    LEFT JOIN (SELECT k_cliente,estacion_id,no_factura,SUM(importe_aplicado) aplicaciones
+               FROM aplicaciones_factura_anticipo WHERE estado='APLICADA' GROUP BY 1,2,3) a
+      ON a.k_cliente=f.k_cliente AND a.estacion_id=f.estacion_id AND a.no_factura=f.no_factura)`;
 }
 const RANGO_SQL = (col = 'f.dias_vencido') => `CASE WHEN ${col}<=0 THEN 'No Vencido' WHEN ${col}<=15 THEN '1-15 días'
   WHEN ${col}<=30 THEN '16-30 días' WHEN ${col}<=60 THEN '31-60 días' WHEN ${col}<=90 THEN '61-90 días'
   WHEN ${col}<=120 THEN '91-120 días' ELSE 'Más de 120 días' END`;
 const ESTADO_SQL = `CASE WHEN f.saldo<=${EPS} THEN 'PAGADA' WHEN f.fecha_vencimiento IS NULL THEN 'SIN VENCIMIENTO'
-  WHEN f.dias_vencido>0 THEN 'VENCIDA' WHEN f.abono+f.pagos_app>0 THEN 'ABONADA' ELSE 'POR VENCER' END`;
+  WHEN f.dias_vencido>0 THEN 'VENCIDA' WHEN f.abono+f.pagos_app+f.aplicaciones_anticipo>0 THEN 'ABONADA' ELSE 'POR VENCER' END`;
 
 // Resumen por cliente: cartera, vencido, por facturar, limite, debito
 function CLIENTES(corte) {
@@ -68,6 +72,7 @@ function CLIENTES(corte) {
       COALESCE(fa.saldo_fact,0) AS saldo_fact, COALESCE(fa.vencido,0) AS vencido, COALESCE(fa.n_fact,0) AS n_fact,
       COALESCE(fa.max_dias,0) AS max_dias, COALESCE(pf.por_facturar,0) AS por_facturar,
       COALESCE(pf.n_pf,0) AS n_pf, COALESCE(de.saldo_favor,0) AS saldo_favor,
+      COALESCE(aa.saldo_anticipo,0) AS saldo_anticipo,
       COALESCE(fa.saldo_fact,0)+COALESCE(pf.por_facturar,0) AS saldo_total
     FROM dim_cliente c
     JOIN dim_estacion e ON e.id=c.estacion_id
@@ -81,7 +86,10 @@ function CLIENTES(corte) {
     LEFT JOIN (SELECT k_cliente, SUM(importe-abono) por_facturar, COUNT(*) n_pf FROM v_cxc
                WHERE estatus='POR FACTURAR' AND importe-abono<>0 GROUP BY k_cliente) pf ON pf.k_cliente=c.k_cliente
     LEFT JOIN (SELECT k_cliente, SUM(abono)-SUM(importe) saldo_favor FROM v_debito GROUP BY k_cliente) de
-      ON de.k_cliente=c.k_cliente)`;
+      ON de.k_cliente=c.k_cliente
+    LEFT JOIN (SELECT k_cliente, SUM(saldo_disponible) saldo_anticipo FROM facturas_anticipo
+               WHERE estado IN ('ABIERTA','PARCIALMENTE_APLICADA') GROUP BY k_cliente) aa
+      ON aa.k_cliente=c.k_cliente)`;
 }
 const RIESGO = (t = 'x') => `CASE WHEN ${t}.limite>0 AND ${t}.saldo_total>${t}.limite THEN 'EXCEDIDO'
   WHEN ${t}.limite=0 AND ${t}.saldo_total>${EPS} THEN 'SIN LÍMITE' ELSE 'OK' END`;
@@ -143,8 +151,10 @@ async function dashboard({ corte, est, estaciones }) {
       SUM(CASE WHEN saldo>${EPS} THEN 1 ELSE 0 END) facturas, COUNT(DISTINCT CASE WHEN saldo>${EPS} THEN k_cliente END) clientes
     FROM ${F} f WHERE f.abierta=1${ew}`, ...ep);
   const pf = await q.get(`SELECT COALESCE(SUM(importe-abono),0) monto, COUNT(*) n FROM v_cxc f WHERE estatus='POR FACTURAR'${ew}`, ...ep);
-  const fav = await q.get(`SELECT COALESCE(SUM(s),0) a_favor, COUNT(*) n FROM
-      (SELECT SUM(abono)-SUM(importe) s FROM v_debito f WHERE 1=1${ew} GROUP BY k_cliente HAVING s>${EPS})`, ...ep);
+  const fav = await q.get(`SELECT COALESCE(SUM(a.saldo_disponible),0) a_favor,
+      COUNT(DISTINCT a.k_cliente) n FROM facturas_anticipo a
+      JOIN dim_cliente c ON c.k_cliente=a.k_cliente
+      WHERE a.estado IN ('ABIERTA','PARCIALMENTE_APLICADA')${estacionesSql('c.estacion_id')}`, ...ep);
   const riesgo = await q.get(`SELECT
       SUM(CASE WHEN x.limite>0 AND x.saldo_total>x.limite THEN 1 ELSE 0 END) excedidos,
       COALESCE(SUM(CASE WHEN x.limite>0 AND x.saldo_total>x.limite THEN x.saldo_total-x.limite ELSE 0 END),0) exceso_monto,
@@ -162,7 +172,11 @@ async function dashboard({ corte, est, estaciones }) {
       WHERE no_factura IS NOT NULL AND estatus<>'POR FACTURAR' AND fecha_factura>=? AND fecha_factura<=?${ew} GROUP BY 1`, desde, corte, ...ep);
   const cob = await q.all(`SELECT substr(fecha_pago,1,7) m, SUM(abono) v FROM v_cxc f
       WHERE fecha_pago>=? AND fecha_pago<=?${ew} GROUP BY 1`, desde, corte, ...ep);
-  const cobApp = await q.all(`SELECT substr(fecha,1,7) m, SUM(monto) v FROM pagos f WHERE anulado=0 AND conciliado=0 AND fecha>=? AND fecha<=?${ew} GROUP BY 1`, desde, corte, ...ep);
+  const cobApp = await q.all(`SELECT substr(fecha,1,7) m, SUM(monto) v FROM (
+      SELECT fecha, monto, estacion_id FROM pagos WHERE anulado=0 AND conciliado=0
+      UNION ALL
+      SELECT fecha_aplicacion, importe_aplicado, estacion_id FROM aplicaciones_factura_anticipo WHERE estado='APLICADA'
+    ) f WHERE fecha>=? AND fecha<=?${ew} GROUP BY 1`, desde, corte, ...ep);
   const tendencia = [];
   for (let i = 0; i < 12; i++) {
     const d = new Date(ini); d.setUTCMonth(ini.getUTCMonth() + i);
@@ -202,6 +216,8 @@ const PUEDE_ANULAR_DESPACHOS = (alias = 'f') => `CASE WHEN
     AND d.no_factura=${alias}.no_factura AND (d.facturada_desde_pendiente<>1 OR d.estatus NOT IN ('POR PAGAR','ABONADO')))
   AND NOT EXISTS (SELECT 1 FROM pagos p WHERE p.k_cliente=${alias}.k_cliente AND p.estacion_id=${alias}.estacion_id
     AND p.no_factura=${alias}.no_factura)
+  AND NOT EXISTS (SELECT 1 FROM aplicaciones_factura_anticipo a WHERE a.k_cliente=${alias}.k_cliente
+    AND a.estacion_id=${alias}.estacion_id AND a.no_factura=${alias}.no_factura AND a.estado='APLICADA')
   AND NOT EXISTS (SELECT 1 FROM fact_factura x WHERE x.k_cliente=${alias}.k_cliente AND x.estacion_id=${alias}.estacion_id
     AND x.no_factura=${alias}.no_factura)
   THEN 1 ELSE 0 END`;
@@ -233,7 +249,7 @@ async function facturas(p) {
   const page = entero(p.page, 1, 1, 100000);
   const tot = await q.get(`SELECT COUNT(*) n, COALESCE(SUM(f.saldo),0) saldo, COALESCE(SUM(f.importe),0) importe ${from}`, ...pr);
   const rows = await q.all(`SELECT f.k_cliente, f.estacion_id, e.nombre estacion, c.cliente, f.no_factura, f.fecha_factura, f.fecha_vencimiento,
-      f.ultimo_despacho, f.despachos, f.importe, f.abono, f.pagos_app, f.saldo, f.dias_vencido,
+      f.ultimo_despacho, f.despachos, f.importe, f.abono, f.pagos_app, f.aplicaciones_anticipo, f.saldo, f.dias_vencido,
       ${ESTADO_SQL} estado, CASE WHEN f.saldo>${EPS} THEN ${RANGO_SQL()} ELSE NULL END rango,
       ${PUEDE_ANULAR_DESPACHOS()} puede_anular_despachos
     ${from} ORDER BY ${orden} LIMIT ? OFFSET ?`, ...pr, size, (page - 1) * size);
@@ -247,6 +263,13 @@ async function facturaDetalle({ corte, k, est, no }) {
   const puedeAnular = await q.get(`SELECT ${PUEDE_ANULAR_DESPACHOS('f')} puede_anular
     FROM (SELECT ? k_cliente, ? estacion_id, ? no_factura) f`, k, est, no);
   f.puede_anular_despachos = Number(puedeAnular.puede_anular);
+  f.aplicaciones_anticipo_historial = await q.all(`SELECT a.id, a.factura_anticipo_id, a.fecha_aplicacion, a.importe_aplicado,
+      a.estado, a.referencia, a.motivo_cancelacion, x.serie, x.folio, u.nombre usuario
+    FROM aplicaciones_factura_anticipo a
+    JOIN facturas_anticipo x ON x.id=a.factura_anticipo_id
+    LEFT JOIN usuarios u ON u.id=a.created_by
+    WHERE a.k_cliente=? AND a.estacion_id=? AND a.no_factura=?
+    ORDER BY a.id DESC`, k, est, no);
   const despachos = await q.all(`SELECT f.id, f.fecha_despacho, f.despacho, f.producto, f.importe, f.abono, f.estatus, f.grupo, f.fecha_pago,
       CASE WHEN f.fecha_factura IS NOT NULL
         THEN date(f.fecha_factura, printf('%+d days', COALESCE(cr.dias,0)))
@@ -262,10 +285,82 @@ async function facturaDetalle({ corte, k, est, no }) {
   return { factura: f, despachos, pagos };
 }
 
+// ---------------- Facturas y aplicaciones de anticipo ----------------
+async function facturasAnticipo(p) {
+  const wh = [], pr = [];
+  filtrarEstaciones('c.estacion_id', p, wh, pr);
+  if (p.k) { wh.push('a.k_cliente=?'); pr.push(p.k); }
+  if (p.q) {
+    wh.push("(c.cliente LIKE ? ESCAPE '\\' OR a.folio LIKE ? ESCAPE '\\' OR COALESCE(a.serie,'') LIKE ? ESCAPE '\\' OR COALESCE(a.uuid_fiscal,'') LIKE ? ESCAPE '\\')");
+    pr.push(likeEsc(p.q), likeEsc(p.q), likeEsc(p.q), likeEsc(p.q));
+  }
+  if (['ABIERTA', 'PARCIALMENTE_APLICADA', 'CERRADA', 'CANCELADA'].includes(p.estado)) {
+    wh.push('a.estado=?'); pr.push(p.estado);
+  }
+  if (esFecha(p.desde)) { wh.push('a.fecha_factura>=?'); pr.push(p.desde); }
+  if (esFecha(p.hasta)) { wh.push('a.fecha_factura<=?'); pr.push(p.hasta); }
+  const from = `FROM facturas_anticipo a JOIN dim_cliente c ON c.k_cliente=a.k_cliente
+    JOIN dim_estacion e ON e.id=c.estacion_id ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''}`;
+  const page = entero(p.page, 1, 1, 100000), size = entero(p.size, 50, 10, 200);
+  const tot = await q.get(`SELECT COUNT(*) n, COALESCE(SUM(CASE WHEN a.estado<>'CANCELADA' THEN a.saldo_disponible ELSE 0 END),0) saldo
+    ${from}`, ...pr);
+  const rows = await q.all(`SELECT a.*, c.cliente, e.nombre estacion
+    ${from} ORDER BY a.fecha_factura DESC, a.id DESC LIMIT ? OFFSET ?`, ...pr, size, (page - 1) * size);
+  return { total: tot.n, saldo_total: tot.saldo, page, size, rows };
+}
+
+async function facturaAnticipoDetalle(id) {
+  const factura = await q.get(`SELECT a.*, c.cliente, c.estacion_id, e.nombre estacion, a.created_by creador
+    FROM facturas_anticipo a JOIN dim_cliente c ON c.k_cliente=a.k_cliente
+    JOIN dim_estacion e ON e.id=c.estacion_id WHERE a.id=?`, id);
+  if (!factura) throw new HttpError(404, 'Factura de Anticipo no encontrada');
+  factura.aplicaciones = await q.all(`SELECT a.*, x.serie, x.folio anticipo_folio, a.created_by usuario,
+      (SELECT group_concat(COALESCE(despacho,'(sin folio)'), ', ')
+        FROM v_cxc WHERE k_cliente=a.k_cliente AND estacion_id=a.estacion_id AND no_factura=a.no_factura) despachos
+    FROM aplicaciones_factura_anticipo a JOIN facturas_anticipo x ON x.id=a.factura_anticipo_id
+    WHERE a.factura_anticipo_id=? ORDER BY a.id DESC`, id);
+  return factura;
+}
+
+async function opcionesAplicacionAnticipo({ k, corte }) {
+  const anticipos = await q.all(`SELECT id, serie, folio, uuid_fiscal, fecha_factura, importe_original,
+      importe_aplicado, saldo_disponible, moneda, tipo_cambio, estado
+    FROM facturas_anticipo WHERE k_cliente=? AND estado IN ('ABIERTA','PARCIALMENTE_APLICADA')
+      AND saldo_disponible>${EPS} AND moneda='MXN' ORDER BY fecha_factura, id`, k);
+  const facturas = await q.all(`SELECT f.k_cliente, f.estacion_id, e.nombre estacion, f.no_factura, f.fecha_factura,
+      f.importe, f.abono, f.pagos_app, f.aplicaciones_anticipo, f.saldo, f.despachos,
+      (SELECT group_concat(COALESCE(despacho,'(sin folio)'), ', ')
+        FROM v_cxc WHERE k_cliente=f.k_cliente AND estacion_id=f.estacion_id AND no_factura=f.no_factura) detalle_despachos
+    FROM ${FAC(corte)} f JOIN dim_estacion e ON e.id=f.estacion_id
+    WHERE f.k_cliente=? AND f.abierta=1 AND f.saldo>${EPS}
+    ORDER BY COALESCE(f.fecha_vencimiento,f.fecha_factura,f.ultimo_despacho), f.no_factura`, k);
+  return { anticipos, facturas };
+}
+
+async function aplicacionesAnticipo(p) {
+  const wh = [], pr = [];
+  filtrarEstaciones('a.estacion_id', p, wh, pr);
+  if (p.k) { wh.push('a.k_cliente=?'); pr.push(p.k); }
+  if (p.estado === 'APLICADA' || p.estado === 'CANCELADA') { wh.push('a.estado=?'); pr.push(p.estado); }
+  if (p.q) {
+    wh.push("(c.cliente LIKE ? ESCAPE '\\' OR a.no_factura LIKE ? ESCAPE '\\' OR f.folio LIKE ? ESCAPE '\\' OR x.folio LIKE ? ESCAPE '\\')");
+    pr.push(likeEsc(p.q), likeEsc(p.q), likeEsc(p.q), likeEsc(p.q));
+  }
+  const from = `FROM aplicaciones_factura_anticipo a
+    JOIN dim_cliente c ON c.k_cliente=a.k_cliente
+    JOIN facturas_anticipo f ON f.id=a.factura_anticipo_id
+    ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''}`;
+  const page = entero(p.page, 1, 1, 100000), size = entero(p.size, 50, 10, 200);
+  const tot = await q.get(`SELECT COUNT(*) n ${from}`, ...pr);
+  const rows = await q.all(`SELECT a.*, c.cliente, f.serie, f.folio anticipo_folio, a.no_factura factura_folio, a.created_by usuario
+    ${from} ORDER BY a.id DESC LIMIT ? OFFSET ?`, ...pr, size, (page - 1) * size);
+  return { total: tot.n, page, size, rows };
+}
+
 // ---------------- Clientes ----------------
 const ORDEN_CLI = {
   saldo: 'x.saldo_total', vencido: 'x.vencido', cliente: 'x.cliente', limite: 'x.limite', dias_credito: 'x.dias_credito',
-  favor: 'x.saldo_favor', uso: '(CASE WHEN x.limite>0 THEN x.saldo_total/x.limite END)', por_facturar: 'x.por_facturar',
+  favor: 'x.saldo_anticipo', uso: '(CASE WHEN x.limite>0 THEN x.saldo_total/x.limite END)', por_facturar: 'x.por_facturar',
   no: 'x.no_cliente', estacion: 'x.estacion', email: 'x.email', telefono: 'x.telefono', modo_carga: 'x.modo_carga',
   riesgo: RIESGO('x'),
 };
@@ -277,18 +372,18 @@ async function clientes(p) {
   else if (p.filtro === 'vencido') wh.push(`x.vencido>${EPS}`);
   else if (p.filtro === 'excedido') wh.push(`x.limite>0 AND x.saldo_total>x.limite`);
   else if (p.filtro === 'sinlimite') wh.push(`x.limite=0 AND x.saldo_total>${EPS}`);
-  else if (p.filtro === 'favor') wh.push(`x.saldo_favor>${EPS}`);
+  else if (p.filtro === 'favor') wh.push(`x.saldo_anticipo>${EPS}`);
   const from = `FROM ${CLIENTES(p.corte)} x ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''}`;
   const orden = (ORDEN_CLI[p.sort] || 'x.saldo_total') + (p.dir === 'asc' ? ' ASC' : ' DESC') + ', x.cliente';
   const size = p.todo ? 50000 : entero(p.size, 50, 10, 200);
   const page = entero(p.page, 1, 1, 100000);
   const tot = await q.get(`SELECT COUNT(*) n, COALESCE(SUM(x.saldo_total),0) saldo, COALESCE(SUM(x.vencido),0) vencido ${from}`, ...pr);
-  const rows = await q.all(`SELECT x.*, x.saldo_favor+x.limite-x.saldo_total disponible, CASE WHEN x.limite>0 THEN x.saldo_total/x.limite END uso, ${RIESGO('x')} riesgo
+  const rows = await q.all(`SELECT x.*, x.saldo_anticipo+x.limite-x.saldo_total disponible, CASE WHEN x.limite>0 THEN x.saldo_total/x.limite END uso, ${RIESGO('x')} riesgo
     ${from} ORDER BY ${orden} LIMIT ? OFFSET ?`, ...pr, size, (page - 1) * size);
   return { total: tot.n, suma_saldo: tot.saldo, suma_vencido: tot.vencido, page, size, rows };
 }
 async function clienteDetalle({ corte, k }) {
-  const c = await q.get(`SELECT x.*, x.saldo_favor+x.limite-x.saldo_total disponible, CASE WHEN x.limite>0 THEN x.saldo_total/x.limite END uso,
+  const c = await q.get(`SELECT x.*, x.saldo_anticipo+x.limite-x.saldo_total disponible, CASE WHEN x.limite>0 THEN x.saldo_total/x.limite END uso,
       ${RIESGO('x')} riesgo FROM ${CLIENTES(corte)} x WHERE x.k_cliente=?`, k);
   if (!c) throw new HttpError(404, 'Cliente no encontrado');
   const cred = await q.get('SELECT origen, actualizado_por, actualizado FROM credito WHERE k_cliente=?', k) || {};
@@ -309,6 +404,8 @@ async function clienteDetalle({ corte, k }) {
     LEFT JOIN bancos b ON b.id=a.banco_id WHERE d.k_cliente=?
     ORDER BY COALESCE(d.fecha,'') DESC, d.id DESC LIMIT 200`, k);
   const debRes = await q.get(`SELECT COALESCE(SUM(abono),0) recargas, COALESCE(SUM(importe),0) consumos FROM v_debito WHERE k_cliente=?`, k);
+  const anticipos = await q.all(`SELECT id, serie, folio, uuid_fiscal, fecha_factura, importe_original, importe_aplicado,
+      saldo_disponible, moneda, tipo_cambio, estado FROM facturas_anticipo WHERE k_cliente=? ORDER BY fecha_factura DESC, id DESC`, k);
   const gestiones = await q.all(`SELECT g.*, u.nombre usuario FROM gestiones g LEFT JOIN usuarios u ON u.id=g.usuario_id
     WHERE g.k_cliente=? ORDER BY g.id DESC LIMIT 100`, k);
   const pagos = await q.all(`SELECT p.id, p.no_factura, p.sin_aplicar, p.fecha, p.monto, p.metodo, COALESCE(p.banco,b.nombre) banco,
@@ -322,7 +419,7 @@ async function clienteDetalle({ corte, k }) {
   return {
     cliente: { ...c, credito_actualizado_por: cred.actualizado_por, credito_actualizado: cred.actualizado },
     aging: RANGOS.map((r) => ({ rango: r, monto: am[r] || 0 })),
-    abiertas, por_facturar: porFacturar, debito, debito_resumen: { ...debRes, saldo: debRes.recargas - debRes.consumos },
+    abiertas, por_facturar: porFacturar, anticipos, debito, debito_resumen: { ...debRes, saldo: debRes.recargas - debRes.consumos },
     gestiones, pagos, historial: hist,
   };
 }
@@ -449,6 +546,16 @@ async function estadoCuenta({ k, desde = '', hasta = '' }) {
         'App', COALESCE(u.nombre,''), 3
       FROM pagos p LEFT JOIN usuarios u ON u.id=p.usuario_id WHERE p.k_cliente=?
       UNION ALL
+      SELECT a.fecha_aplicacion, 'Aplicación de anticipo', x.folio, '', a.no_factura, '',
+        COALESCE(a.referencia,'Aplicación de Factura de Anticipo'), 0,
+        CASE WHEN a.estado='APLICADA' THEN a.importe_aplicado ELSE 0 END,
+        0, 0, a.importe_aplicado,
+        CASE WHEN a.estado='CANCELADA' THEN 'Aplicación cancelada' ELSE 'Aplicado' END,
+        'Anticipo', COALESCE(u.nombre,''), 3
+      FROM aplicaciones_factura_anticipo a
+      JOIN facturas_anticipo x ON x.id=a.factura_anticipo_id
+      LEFT JOIN usuarios u ON u.id=a.created_by WHERE a.k_cliente=?
+      UNION ALL
       SELECT d.fecha, CASE WHEN d.abono>0 THEN 'Abono prepago' ELSE 'Consumo prepago' END,
         COALESCE(d.folio,''), COALESCE(d.folio,''), '', COALESCE(d.grupo,''), d.tipo,
         0, 0, d.abono, d.importe, CASE WHEN d.abono>0 THEN d.abono ELSE d.importe END,
@@ -461,7 +568,7 @@ async function estadoCuenta({ k, desde = '', hasta = '' }) {
       FROM gestiones g LEFT JOIN usuarios u ON u.id=g.usuario_id WHERE g.k_cliente=?
     ) movimientos
     WHERE fecha IS NOT NULL AND (?='' OR fecha<=?)
-    ORDER BY fecha, orden, referencia`, k, k, k, k, k, k, hasta, hasta);
+    ORDER BY fecha, orden, referencia`, k, k, k, k, k, k, k, hasta, hasta);
 
   let saldoCxc = 0, saldoPrepago = 0;
   const conSaldos = rows.map((row) => {
@@ -481,5 +588,6 @@ async function estadoCuenta({ k, desde = '', hasta = '' }) {
   return filtradas;
 }
 
-module.exports = { listaClientes, corteDefault, corteValido, catalogos, dashboard, facturas, facturaDetalle, clientes, clienteDetalle,
+module.exports = { listaClientes, corteDefault, corteValido, catalogos, dashboard, facturas, facturaDetalle, facturasAnticipo,
+  facturaAnticipoDetalle, opcionesAplicacionAnticipo, aplicacionesAnticipo, clientes, clienteDetalle,
   porFacturar, debitoResumen, debitoMovs, saldoDebito, alertas, estadoCuenta, FAC, EPS, RANGOS };

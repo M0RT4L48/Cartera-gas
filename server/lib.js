@@ -113,10 +113,10 @@ const ready = (async () => {
 
 // ---------------- Roles y permisos ----------------
 const ROLES = {
-  admin:      { etiqueta: 'Administrador General', permisos: ['ver', 'pagos', 'gestiones', 'credito', 'clientes', 'facturas', 'debito', 'usuarios', 'bitacora', 'carga', 'export', 'anular_prepago', 'editar_despacho', 'anular_pago'] },
-  gestor:     { etiqueta: 'Gestor de Estación',    permisos: ['ver', 'pagos', 'gestiones', 'credito', 'clientes', 'facturas', 'debito', 'export'] },
-  supervisor: { etiqueta: 'Supervisor',            permisos: ['ver', 'anular_prepago', 'editar_despacho', 'anular_pago'] },
-  consulta:   { etiqueta: 'Consulta',              permisos: ['ver', 'export'] },
+  admin:      { etiqueta: 'Administrador General', permisos: ['ver', 'pagos', 'gestiones', 'credito', 'clientes', 'facturas', 'anticipos_ver', 'anticipos_crear', 'anticipos_editar', 'anticipos_cancelar', 'anticipos_aplicaciones_ver', 'aplicaciones_anticipo_ver', 'aplicaciones_anticipo_crear', 'aplicaciones_anticipo_cancelar', 'usuarios', 'bitacora', 'carga', 'export', 'editar_despacho', 'anular_pago'] },
+  gestor:     { etiqueta: 'Gestor de Estación',    permisos: ['ver', 'pagos', 'gestiones', 'credito', 'clientes', 'facturas', 'anticipos_ver', 'anticipos_crear', 'anticipos_editar', 'anticipos_aplicaciones_ver', 'aplicaciones_anticipo_ver', 'aplicaciones_anticipo_crear', 'export'] },
+  supervisor: { etiqueta: 'Supervisor',            permisos: ['ver', 'anticipos_ver', 'anticipos_cancelar', 'anticipos_aplicaciones_ver', 'aplicaciones_anticipo_ver', 'aplicaciones_anticipo_cancelar', 'editar_despacho', 'anular_pago'] },
+  consulta:   { etiqueta: 'Consulta',               permisos: ['ver', 'anticipos_ver', 'anticipos_aplicaciones_ver', 'aplicaciones_anticipo_ver', 'export'] },
 };
 const can = (user, permiso) => !!user && !!ROLES[user.rol] && ROLES[user.rol].permisos.includes(permiso);
 

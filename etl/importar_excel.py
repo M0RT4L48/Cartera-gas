@@ -50,6 +50,12 @@ def main():
     os.makedirs(os.path.dirname(os.path.abspath(a.db)), exist_ok=True)
     con = sqlite3.connect(a.db, timeout=60)
     cur = con.cursor()
+    existing_tables = {r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if full:
+        anticipos = cur.execute('SELECT COUNT(*) FROM facturas_anticipo').fetchone()[0] if 'facturas_anticipo' in existing_tables else 0
+        aplicaciones = cur.execute('SELECT COUNT(*) FROM aplicaciones_factura_anticipo').fetchone()[0] if 'aplicaciones_factura_anticipo' in existing_tables else 0
+        if anticipos or aplicaciones:
+            raise SystemExit('No se puede realizar una carga completa mientras existan Facturas o Aplicaciones de Anticipo; conserva su historial y vínculos.')
     for table, column, definition in [
         ('cliente_extra', 'email', 'TEXT'),
         ('cliente_extra', 'telefono', 'TEXT'),
@@ -135,6 +141,26 @@ def main():
     c.loc[m, 'estatus'] = 'POR PAGAR'          # facturado sin estatus = por pagar
     c['estatus'] = c.estatus.fillna('POR FACTURAR')
     c = c.drop_duplicates('id')
+    if not full and 'cxc' in modules and 'aplicaciones_factura_anticipo' in existing_tables:
+        refs_anticipo = {
+            (str(k), int(estacion), str(factura))
+            for k, estacion, factura in cur.execute(
+                'SELECT DISTINCT k_cliente,estacion_id,no_factura FROM aplicaciones_factura_anticipo')
+        }
+        refs_excel = {
+            (str(row.k_cliente), int(row.estacion_id), str(row.no_factura))
+            for row in c.itertuples() if pd.notna(row.no_factura) and row.estatus != 'POR FACTURAR'
+        }
+        refs_app = set()
+        if 'fact_cxc_app' in existing_tables:
+            refs_app = {
+                (str(k), int(estacion), str(factura))
+                for k, estacion, factura in cur.execute("""SELECT DISTINCT k_cliente,estacion_id,no_factura
+                  FROM fact_cxc_app WHERE no_factura IS NOT NULL AND estatus<>'POR FACTURAR'""")
+            }
+        faltantes_anticipo = refs_anticipo - refs_excel - refs_app
+        if faltantes_anticipo:
+            raise SystemExit(f'No se puede reemplazar CxC: {len(faltantes_anticipo)} factura(s) vinculada(s) a aplicaciones de anticipo no aparecerían en la nueva carga.')
 
     # ---------- Facturas (agregado) ----------
     f = c[c.no_factura.notna()].copy()
@@ -208,8 +234,9 @@ def main():
             required_clients.update(r[0] for r in cur.execute('SELECT DISTINCT k_cliente FROM fact_cxc'))
         if 'debito' not in modules:
             required_clients.update(r[0] for r in cur.execute('SELECT DISTINCT k_cliente FROM fact_debito'))
-        for table in ['pagos', 'debito_app', 'fact_cxc_app', 'gestiones']:
-            required_clients.update(r[0] for r in cur.execute(f'SELECT DISTINCT k_cliente FROM {table}'))
+        for table in ['pagos', 'debito_app', 'fact_cxc_app', 'gestiones', 'facturas_anticipo', 'aplicaciones_factura_anticipo']:
+            if table in existing_tables:
+                required_clients.update(r[0] for r in cur.execute(f'SELECT DISTINCT k_cliente FROM {table}'))
         required_clients.update(r[0] for r in cur.execute(
             'SELECT k_cliente FROM cliente_extra WHERE creado_app=1 OR editado_app=1'))
 
@@ -235,7 +262,7 @@ def main():
             cur.execute('UPDATE credito SET limite=?,dias=?,origen=?,actualizado_por=?,actualizado=? WHERE k_cliente=?',
                         (*row, key))
         for key, _name, station_id, _number in dim_rows:
-            for table in ['fact_cxc', 'fact_factura', 'fact_debito', 'pagos', 'debito_app', 'fact_cxc_app']:
+            for table in ['fact_cxc', 'fact_factura', 'fact_debito', 'pagos', 'debito_app', 'fact_cxc_app', 'aplicaciones_factura_anticipo']:
                 cur.execute(f'UPDATE {table} SET estacion_id=? WHERE k_cliente=?', (station_id, key))
 
     if full or 'clientes_credito' in modules:

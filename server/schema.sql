@@ -207,6 +207,61 @@ CREATE TABLE IF NOT EXISTS fact_cxc_app (
 );
 CREATE INDEX IF NOT EXISTS ix_cxcapp_cli ON fact_cxc_app(k_cliente, no_factura);
 
+CREATE TABLE IF NOT EXISTS facturas_anticipo (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  k_cliente         TEXT NOT NULL REFERENCES dim_cliente(k_cliente),
+  serie             TEXT,
+  folio             TEXT NOT NULL,
+  uuid_fiscal       TEXT,
+  fecha_factura     TEXT NOT NULL,
+  importe_original  REAL NOT NULL CHECK (importe_original > 0),
+  importe_aplicado  REAL NOT NULL DEFAULT 0 CHECK (importe_aplicado >= 0 AND importe_aplicado <= importe_original),
+  saldo_disponible  REAL NOT NULL CHECK (saldo_disponible >= 0 AND saldo_disponible <= importe_original),
+  moneda            TEXT NOT NULL DEFAULT 'MXN',
+  tipo_cambio       REAL CHECK (tipo_cambio IS NULL OR tipo_cambio > 0),
+  referencia        TEXT,
+  observaciones     TEXT,
+  estado            TEXT NOT NULL DEFAULT 'ABIERTA' CHECK (estado IN ('ABIERTA','PARCIALMENTE_APLICADA','CERRADA','CANCELADA')),
+  fecha_cancelacion TEXT,
+  motivo_cancelacion TEXT,
+  created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  created_by        TEXT,
+  updated_at        TEXT,
+  updated_by        TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_anticipo_folio
+  ON facturas_anticipo(k_cliente, COALESCE(serie,''), folio COLLATE NOCASE);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_anticipo_uuid
+  ON facturas_anticipo(uuid_fiscal COLLATE NOCASE) WHERE uuid_fiscal IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix_anticipo_cliente_estado
+  ON facturas_anticipo(k_cliente, estado, fecha_factura);
+
+CREATE TABLE IF NOT EXISTS aplicaciones_factura_anticipo (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  idempotencia      TEXT NOT NULL UNIQUE,
+  k_cliente         TEXT NOT NULL REFERENCES dim_cliente(k_cliente),
+  factura_anticipo_id INTEGER NOT NULL REFERENCES facturas_anticipo(id),
+  estacion_id       INTEGER NOT NULL REFERENCES dim_estacion(id),
+  no_factura        TEXT NOT NULL,
+  fecha_aplicacion  TEXT NOT NULL,
+  importe_aplicado  REAL NOT NULL CHECK (importe_aplicado > 0),
+  moneda            TEXT NOT NULL DEFAULT 'MXN',
+  tipo_cambio       REAL CHECK (tipo_cambio IS NULL OR tipo_cambio > 0),
+  estado            TEXT NOT NULL DEFAULT 'APLICADA' CHECK (estado IN ('APLICADA','CANCELADA')),
+  referencia        TEXT,
+  observaciones     TEXT,
+  fecha_cancelacion TEXT,
+  motivo_cancelacion TEXT,
+  created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  created_by        TEXT,
+  updated_at        TEXT,
+  updated_by        TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_aplicacion_anticipo
+  ON aplicaciones_factura_anticipo(factura_anticipo_id, estado);
+CREATE INDEX IF NOT EXISTS ix_aplicacion_factura
+  ON aplicaciones_factura_anticipo(k_cliente, estacion_id, no_factura, estado);
+
 CREATE TABLE IF NOT EXISTS cliente_extra (     -- RFC y clientes dados de alta desde la app
   k_cliente   TEXT PRIMARY KEY,
   rfc         TEXT,

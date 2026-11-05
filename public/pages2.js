@@ -148,6 +148,253 @@
     loadRight();
   };
 
+  CG.routes.debito = () => { location.hash = '#/facturas-anticipo'; };
+
+  // =============== FACTURAS DE ANTICIPO ===============
+  CG.routes['facturas-anticipo'] = async () => {
+    loading();
+    let clientes;
+    try { clientes = await CG.clientesLista(false); } catch (e) { return errorView(e); }
+    const st = { q: '', estado: '', desde: '', hasta: '', page: 1 };
+    const load = async () => {
+      try {
+        const r = await api('/api/facturas-anticipo?' + qs(gp({ ...st, size: 50 })));
+        $('#tablaAnticipos').innerHTML = html`
+          <div class="tablewrap"><table><thead><tr><th>Cliente</th><th>Serie / Folio</th><th>UUID fiscal</th><th>Fecha</th><th class="n">Importe original</th><th class="n">Aplicado</th><th class="n">Saldo disponible</th><th>Moneda</th><th>Estado</th><th></th></tr></thead>
+            <tbody>${r.rows.length ? r.rows.map((a) => html`<tr>
+              <td class="wrap">${a.cliente}</td><td>${a.serie ? `${a.serie}-` : ''}${a.folio}</td><td class="wrap">${a.uuid_fiscal || '—'}</td><td>${fdate(a.fecha_factura)}</td>
+              <td class="n">${money(a.importe_original, 2)}</td><td class="n">${money(a.importe_aplicado, 2)}</td><td class="n strong">${money(a.saldo_disponible, 2)}</td><td>${a.moneda}</td><td>${badge(a.estado)}</td>
+              <td><button class="btn small" data-act="verAnticipo" data-id="${a.id}">Detalle</button></td></tr>`)
+              : html`<tr><td colspan="10" class="empty">No hay Facturas de Anticipo para estos filtros.</td></tr>`}</tbody>
+            <tfoot><tr><td colspan="6">Saldo disponible de la selección</td><td class="n strong">${money(r.saldo_total, 2)}</td><td colspan="3"></td></tr></tfoot></table></div>
+          ${pager(st, r.total, r.size)}`.s;
+      } catch (e) { $('#tablaAnticipos').innerHTML = html`<div class="note">${e.message}</div>`.s; }
+    };
+    setView(html`
+      <div class="h"><h2>Facturas de Anticipo</h2><p>Consulta anticipos individuales y sus saldos; cada aplicación queda ligada a una factura existente de despacho.</p>
+        ${can('anticipos_crear') ? html`<button class="btn dark" data-act="nuevaFacturaAnticipo">+ Nueva Factura de Anticipo</button>` : ''}</div>
+      <div class="bar" id="filtrosAnticipos">
+        <label>Cliente, folio o UUID<input data-f="q" placeholder="Buscar…" style="min-width:220px"></label>
+        <label>Estado<select data-f="estado">${opt('', 'Todos')}${['ABIERTA','PARCIALMENTE_APLICADA','CERRADA','CANCELADA'].map((estado) => opt(estado, estado))}</select></label>
+        <label>Desde<input data-f="desde" type="date"></label><label>Hasta<input data-f="hasta" type="date"></label>
+      </div>
+      <div id="tablaAnticipos"><div class="empty">Cargando…</div></div>`);
+    bindFilters($('#filtrosAnticipos'), st, load);
+    $('#view').onclick = (e) => {
+      const pg = e.target.closest('[data-page]');
+      if (pg && !pg.disabled) { st.page = Number(pg.dataset.page); load(); }
+    };
+
+    const formFactura = (factura = null) => {
+      modal(html`
+        <h2>${factura ? 'Editar Factura de Anticipo' : 'Nueva Factura de Anticipo'}</h2>
+        ${factura && factura.importe_aplicado > 0 ? html`<div class="note info">Una factura con aplicaciones no puede editarse. Cancela las aplicaciones primero.</div>` : ''}
+        <form id="formAnticipo" class="form">
+          <label>Cliente<select name="k_cliente" required ${factura ? 'disabled' : ''}>
+            ${clientes.map((c) => opt(c.k_cliente, `${c.cliente} · ${c.estacion}`, factura ? factura.k_cliente : ''))}</select></label>
+          ${factura ? html`<input type="hidden" name="k_cliente" value="${factura.k_cliente}">` : ''}
+          <label>Serie<input name="serie" maxlength="30" value="${factura ? factura.serie || '' : ''}"></label>
+          <label>Folio<input name="folio" maxlength="80" value="${factura ? factura.folio : ''}" required></label>
+          <label>UUID fiscal<input name="uuid_fiscal" maxlength="36" value="${factura ? factura.uuid_fiscal || '' : ''}"></label>
+          <label>Fecha de factura<input name="fecha_factura" type="date" max="${hoyLocal()}" value="${factura ? factura.fecha_factura : hoyLocal()}" required></label>
+          <label>Importe original<input name="importe_original" type="number" min="0.01" max="1000000000" step="0.01" value="${factura ? factura.importe_original : ''}" required></label>
+          <label>Moneda<input name="moneda" maxlength="3" pattern="[A-Za-z]{3}" value="${factura ? factura.moneda : 'MXN'}" required></label>
+          <label>Tipo de cambio<input name="tipo_cambio" type="number" min="0.000001" step="0.000001" value="${factura ? factura.tipo_cambio || '' : ''}" placeholder="1.00 para MXN"></label>
+          <label>Referencia<input name="referencia" maxlength="100" value="${factura ? factura.referencia || '' : ''}"></label>
+          <label class="full">Observaciones<textarea name="observaciones" rows="2" maxlength="1000">${factura ? factura.observaciones || '' : ''}</textarea></label>
+          ${factura ? html`<div class="full note info">Importe aplicado: ${money(factura.importe_aplicado, 2)} · Saldo disponible: ${money(factura.saldo_disponible, 2)} · Estado: ${factura.estado}</div>` : ''}
+          <div class="full err" id="anticipoErr"></div><div class="full actions">
+            <button type="button" class="btn" data-act="cerrar">Cancelar</button><button type="submit" class="btn dark">Guardar</button></div>
+        </form>`, { wide: true });
+      $('#formAnticipo').onsubmit = async (e) => {
+        e.preventDefault();
+        const form = e.currentTarget, btn = form.querySelector('[type=submit]');
+        btn.disabled = true; $('#anticipoErr').textContent = '';
+        try {
+          const body = Object.fromEntries(new FormData(form));
+          await api(factura ? `/api/facturas-anticipo/${factura.id}` : '/api/facturas-anticipo',
+            { method: factura ? 'PUT' : 'POST', body });
+          toast(factura ? 'Factura de Anticipo actualizada' : 'Factura de Anticipo registrada');
+          closeModal(); await load(); await CG.refreshKpis();
+        } catch (er) { $('#anticipoErr').textContent = er.message; }
+        finally { btn.disabled = false; }
+      };
+    };
+    CG.acts.nuevaFacturaAnticipo = () => formFactura();
+    CG.acts.verAnticipo = async (el) => {
+      try {
+        const a = await api('/api/facturas-anticipo/' + Number(el.dataset.id));
+        const permiteCancelar = can('anticipos_cancelar') && a.estado !== 'CANCELADA';
+        modal(html`
+          <h2>Factura de Anticipo ${a.serie ? `${a.serie}-` : ''}${a.folio} ${badge(a.estado)}</h2>
+          <dl class="kv"><dt>Cliente</dt><dd>${a.cliente}</dd><dt>UUID</dt><dd>${a.uuid_fiscal || '—'}</dd>
+            <dt>Fecha</dt><dd>${fdate(a.fecha_factura)}</dd><dt>Original</dt><dd>${money(a.importe_original, 2)} ${a.moneda}</dd>
+            <dt>Aplicado</dt><dd>${money(a.importe_aplicado, 2)}</dd><dt>Disponible</dt><dd>${money(a.saldo_disponible, 2)}</dd>
+            <dt>Tipo de cambio</dt><dd>${a.tipo_cambio || '—'}</dd><dt>Referencia</dt><dd>${a.referencia || '—'}</dd>
+            <dt>Observaciones</dt><dd>${a.observaciones || '—'}</dd><dt>Registró</dt><dd>${a.creador || '—'}</dd>
+            ${a.motivo_cancelacion ? html`<dt>Cancelación</dt><dd>${a.motivo_cancelacion} · ${fdate(a.fecha_cancelacion)}</dd>` : ''}</dl>
+          <div class="actions" style="margin:12px 0">
+            ${can('anticipos_editar') && a.estado !== 'CANCELADA' && a.importe_aplicado === 0 && !a.aplicaciones.length ? html`<button class="btn" data-act="editarAnticipo" data-id="${a.id}">Editar</button>` : ''}
+            ${can('anticipos_aplicaciones_ver') ? html`<a class="btn" href="#/aplicaciones-anticipo?k=${encodeURIComponent(a.k_cliente)}" data-act="cerrar">Aplicaciones</a>` : ''}
+            ${permiteCancelar ? html`<button class="btn danger" data-act="cancelarAnticipo" data-id="${a.id}">Cancelar factura</button>` : ''}
+            <button class="btn" data-act="cerrar">Cerrar</button></div>
+          <h3>Historial de aplicaciones</h3>
+          ${a.aplicaciones.length ? html`<div class="tablewrap nomax"><table><thead><tr><th>Fecha</th><th>Aplicación</th><th>Factura existente</th><th>Despacho(s)</th><th class="n">Importe</th><th>Estado</th><th>Usuario</th><th></th></tr></thead><tbody>
+            ${a.aplicaciones.map((x) => html`<tr><td>${fdate(x.fecha_aplicacion)}</td><td>AP-${x.id}</td><td>${x.no_factura}</td><td class="wrap">${x.despachos || '—'}</td><td class="n">${money(x.importe_aplicado, 2)} ${x.moneda}</td><td>${badge(x.estado)}</td><td>${x.usuario || '—'}</td>
+              <td>${can('aplicaciones_anticipo_cancelar') && x.estado === 'APLICADA' ? html`<button class="btn small danger" data-act="cancelarAplicacionAnticipo" data-id="${x.id}" data-anticipo-id="${a.id}">Anular</button>` : ''}</td></tr>`)}</tbody></table></div>`
+            : html`<div class="empty">Sin aplicaciones registradas.</div>`}`, { wide: true });
+      } catch (er) { toast(er.message, 'bad'); }
+    };
+    CG.acts.editarAnticipo = async (el) => {
+      try {
+        const factura = await api('/api/facturas-anticipo/' + Number(el.dataset.id));
+        if (factura.importe_aplicado > 0 || factura.aplicaciones.length) { toast('No se puede editar un anticipo que ya tiene aplicaciones', 'bad'); return; }
+        formFactura(factura);
+      } catch (er) { toast(er.message, 'bad'); }
+    };
+    CG.acts.cancelarAnticipo = async (el) => {
+      const motivo = prompt('Motivo de cancelación de la Factura de Anticipo:');
+      if (!motivo || !motivo.trim()) return;
+      try {
+        await api(`/api/facturas-anticipo/${Number(el.dataset.id)}/cancelar`, { method: 'POST', body: { motivo } });
+        toast('Factura de Anticipo cancelada'); closeModal(); await load(); await CG.refreshKpis();
+      } catch (er) { toast(er.message, 'bad'); }
+    };
+    CG.acts.cancelarAplicacionAnticipo = async (el) => {
+      const motivo = prompt('Motivo de cancelación de la aplicación:');
+      if (!motivo || !motivo.trim()) return;
+      try {
+        await api(`/api/aplicaciones-anticipo/${Number(el.dataset.id)}/cancelar`, { method: 'POST', body: { motivo } });
+        toast('Aplicación cancelada; el saldo fue restituido');
+        const anticipoId = el.dataset.anticipoId;
+        if (anticipoId) {
+          closeModal();
+          await CG.acts.verAnticipo({ dataset: { id: anticipoId } });
+        } else {
+          await load(); closeModal();
+        }
+      } catch (er) { toast(er.message, 'bad'); }
+    };
+    load();
+  };
+
+  // =============== APLICACION DE FACTURAS DE ANTICIPO ===============
+  CG.routes['aplicaciones-anticipo'] = async (_args, query = {}) => {
+    loading();
+    let clientes;
+    try { clientes = await CG.clientesLista(false); } catch (e) { return errorView(e); }
+    const st = { k: query.k || '', q: '', estado: '', page: 1 };
+    let opciones = { anticipos: [], facturas: [] };
+    const renderOptions = () => {
+      const anticipoSelect = $('#selAnticipo'), facturaSelect = $('#selFacturaDespacho');
+      if (!anticipoSelect || !facturaSelect) return;
+      anticipoSelect.innerHTML = '<option value="">Selecciona un anticipo…</option>' +
+        opciones.anticipos.map((a) => `<option value="${a.id}">${CG.esc(`${a.serie ? `${a.serie}-` : ''}${a.folio} · disponible ${money(a.saldo_disponible, 2)}`)}</option>`).join('');
+      facturaSelect.innerHTML = '<option value="">Selecciona una factura existente…</option>' +
+        opciones.facturas.map((f) => `<option value="${CG.esc(`${f.estacion_id}|${f.no_factura}`)}">${CG.esc(`${f.no_factura} · ${f.detalle_despachos || ''} · saldo ${money(f.saldo, 2)}`)}</option>`).join('');
+      $('#resumenAnticipo').innerHTML = '';
+      $('#resumenFactura').innerHTML = '';
+    };
+    const cargarOpciones = async () => {
+      const k = $('#selClienteAnticipo').value;
+      opciones = k ? await api('/api/aplicaciones-anticipo/opciones?' + qs(gp({ k }))) : { anticipos: [], facturas: [] };
+      renderOptions();
+    };
+    const loadHistory = async () => {
+      try {
+        const r = await api('/api/aplicaciones-anticipo?' + qs(gp({ ...st, size: 50 })));
+        $('#tablaAplicacionesAnticipo').innerHTML = html`
+          <div class="tablewrap"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Aplicación</th><th>Factura de Anticipo</th><th>Factura de despacho</th><th class="n">Importe</th><th>Estado</th><th>Usuario</th><th></th></tr></thead><tbody>
+            ${r.rows.length ? r.rows.map((a) => html`<tr><td>${fdate(a.fecha_aplicacion)}</td><td>${a.cliente}</td><td>AP-${a.id}</td>
+              <td>${a.serie ? `${a.serie}-` : ''}${a.anticipo_folio}</td><td>${a.factura_folio}</td><td class="n">${money(a.importe_aplicado, 2)} ${a.moneda}</td><td>${badge(a.estado)}</td><td>${a.usuario || '—'}</td>
+              <td>${can('aplicaciones_anticipo_cancelar') && a.estado === 'APLICADA' ? html`<button class="btn small danger" data-act="cancelarAplicacionAnticipo" data-id="${a.id}">Anular</button>` : ''}</td></tr>`)
+              : html`<tr><td colspan="9" class="empty">No hay aplicaciones para estos filtros.</td></tr>`}</tbody></table></div>${pager(st, r.total, r.size)}`.s;
+      } catch (e) { $('#tablaAplicacionesAnticipo').innerHTML = html`<div class="note">${e.message}</div>`.s; }
+    };
+    setView(html`
+      <div class="h"><h2>Aplicación de Factura de Anticipo</h2><p>Aplica saldo individual de una factura de anticipo a una factura existente; el importe aplicado reduce el saldo pendiente en Cartera.</p></div>
+      <div class="card" style="margin-bottom:18px"><h3>Nueva aplicación</h3>
+        <div class="form">
+          <label>Cliente<select id="selClienteAnticipo"><option value="">Selecciona un cliente…</option>
+            ${clientes.map((c) => opt(c.k_cliente, `${c.cliente} · ${c.estacion}`, st.k))}</select></label>
+          <label>Factura de Anticipo<select id="selAnticipo"><option value="">Selecciona un cliente primero…</option></select></label>
+          <label>Factura existente del despacho<select id="selFacturaDespacho"><option value="">Selecciona un cliente primero…</option></select></label>
+          <div id="resumenAnticipo" class="full"></div><div id="resumenFactura" class="full"></div>
+          <label>Importe a aplicar (MXN)<input id="montoAplicacion" type="number" min="0.01" step="0.01" required></label>
+          <label>Fecha de aplicación<input id="fechaAplicacion" type="date" value="${hoyLocal()}" max="${hoyLocal()}" required></label>
+          <label>Referencia<input id="referenciaAplicacion" maxlength="100"></label>
+          <label class="full">Observaciones<textarea id="observacionesAplicacion" rows="2" maxlength="1000"></textarea></label>
+          <div class="full note info">Solo se pueden aplicar anticipos en MXN: las facturas existentes del sistema no guardan un campo de moneda.</div>
+          <div class="full err" id="aplicacionErr"></div>
+          ${can('aplicaciones_anticipo_crear') ? html`<div class="full actions"><button class="btn accent" id="btnAplicarAnticipo" type="button">Registrar aplicación</button></div>` : ''}
+        </div>
+      </div>
+      <div class="bar" id="filtrosAplicaciones">
+        <label>Buscar<input data-f="q" placeholder="Cliente, anticipo o factura"></label>
+        <label>Estado<select data-f="estado">${opt('', 'Todos')}${opt('APLICADA', 'Aplicada')}${opt('CANCELADA', 'Cancelada')}</select></label>
+      </div><div id="tablaAplicacionesAnticipo"><div class="empty">Cargando…</div></div>`);
+    bindFilters($('#filtrosAplicaciones'), st, loadHistory);
+    $('#view').onclick = (e) => {
+      const pg = e.target.closest('[data-page]');
+      if (pg && !pg.disabled) { st.page = Number(pg.dataset.page); loadHistory(); }
+    };
+    $('#selClienteAnticipo').onchange = async () => {
+      $('#aplicacionErr').textContent = '';
+      try { await cargarOpciones(); } catch (er) { $('#aplicacionErr').textContent = er.message; }
+    };
+    $('#selAnticipo').onchange = () => {
+      const anticipo = opciones.anticipos.find((a) => Number(a.id) === Number($('#selAnticipo').value));
+      $('#resumenAnticipo').innerHTML = anticipo ? html`<div class="note info">Anticipo ${anticipo.serie ? `${anticipo.serie}-` : ''}${anticipo.folio} · UUID ${anticipo.uuid_fiscal || '—'} · Original ${money(anticipo.importe_original, 2)} · Aplicado ${money(anticipo.importe_aplicado, 2)} · Disponible ${money(anticipo.saldo_disponible, 2)} ${anticipo.moneda} · ${anticipo.estado}</div>`.s : '';
+      const amount = $('#montoAplicacion');
+      amount.max = anticipo ? anticipo.saldo_disponible : '';
+      amount.value = '';
+    };
+    $('#selFacturaDespacho').onchange = () => {
+      const [estacionId, noFactura] = ($('#selFacturaDespacho').value || '|').split('|');
+      const factura = opciones.facturas.find((f) => f.estacion_id === Number(estacionId) && f.no_factura === noFactura);
+      $('#resumenFactura').innerHTML = factura ? html`<div class="note info">Factura ${factura.no_factura} · ${fdate(factura.fecha_factura)} · Importe ${money(factura.importe, 2)} · Despachos ${factura.detalle_despachos || '—'} · Saldo pendiente ${money(factura.saldo, 2)}</div>`.s : '';
+      const amount = $('#montoAplicacion');
+      const anticipo = opciones.anticipos.find((a) => Number(a.id) === Number($('#selAnticipo').value));
+      amount.max = factura && anticipo ? Math.min(factura.saldo, anticipo.saldo_disponible) : '';
+    };
+    $('#btnAplicarAnticipo')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const [estacionId, noFactura] = ($('#selFacturaDespacho').value || '|').split('|');
+      const idAnticipo = Number($('#selAnticipo').value);
+      const monto = Number($('#montoAplicacion').value);
+      const fecha = $('#fechaAplicacion').value;
+      const anticipo = opciones.anticipos.find((a) => Number(a.id) === idAnticipo);
+      const factura = opciones.facturas.find((f) => f.estacion_id === Number(estacionId) && f.no_factura === noFactura);
+      if (!anticipo || !factura) { $('#aplicacionErr').textContent = 'Selecciona una Factura de Anticipo y una factura existente.'; return; }
+      if (anticipo.moneda !== 'MXN') { $('#aplicacionErr').textContent = 'Solo se pueden aplicar anticipos en MXN a las facturas actuales.'; return; }
+      if (!(monto > 0) || monto > anticipo.saldo_disponible + 0.005 || monto > factura.saldo + 0.005) {
+        $('#aplicacionErr').textContent = 'El importe debe ser positivo y no exceder el saldo del anticipo ni el de la factura.'; return;
+      }
+      btn.disabled = true; $('#aplicacionErr').textContent = '';
+      try {
+        const r = await api('/api/aplicaciones-anticipo', { method: 'POST', body: {
+          k_cliente: $('#selClienteAnticipo').value, factura_anticipo_id: idAnticipo, estacion_id: Number(estacionId),
+          no_factura: noFactura, fecha_aplicacion: fecha, importe_aplicado: monto,
+          referencia: $('#referenciaAplicacion').value, observaciones: $('#observacionesAplicacion').value,
+          idempotencia: crypto.randomUUID(),
+        } });
+        toast(`Aplicación AP-${r.id} registrada. Nuevo saldo del anticipo: ${money(r.saldo_disponible, 2)}.`);
+        await cargarOpciones(); await loadHistory(); await CG.refreshKpis();
+      } catch (er) { $('#aplicacionErr').textContent = er.message; }
+      finally { btn.disabled = false; }
+    });
+    $('#selClienteAnticipo').dispatchEvent(new Event('change'));
+    loadHistory();
+    CG.acts.cancelarAplicacionAnticipo = async (el) => {
+      const motivo = prompt('Motivo de cancelación de la aplicación:');
+      if (!motivo || !motivo.trim()) return;
+      try {
+        await api(`/api/aplicaciones-anticipo/${Number(el.dataset.id)}/cancelar`, { method: 'POST', body: { motivo } });
+        toast('Aplicación cancelada; el saldo fue restituido'); await loadHistory(); await CG.refreshKpis();
+      } catch (er) { toast(er.message, 'bad'); }
+    };
+  };
+
   // =============== APLICACIÓN DE PAGOS (FIFO) ===============
   CG.routes.pagos = async (args, query) => {
     loading();
@@ -207,49 +454,7 @@
           <td class="n"><input class="input-aplicar" type="number" min="0" max="${f.saldo}" step="0.01" data-no="${f.no_factura}" data-est="${f.estacion_id}" data-pending="${f.saldo}" placeholder="0.00" style="width:130px;text-align:right;font-weight:600"></td></tr>`)}`.s;
       badgeRest();
     };
-    const renderPrepagoBox = (saldo, tiene) => {
-      const box = $('#pago-prepago-box');
-      if (!box) return;
-      if (!cli) {
-        box.innerHTML = html`
-          <div style="border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--bg)">
-            <label class="inline-check" style="font-weight:600;color:var(--mut)">
-              <input type="checkbox" id="pago-usar-prepago" disabled> Aplicar a saldo de prepago
-            </label>
-            <div style="margin-top:4px;font-size:12px;color:var(--mut)">Selecciona un cliente para consultar su saldo de prepago</div>
-          </div>`.s;
-        return;
-      }
-      const limite = Math.min(saldo, facs.reduce((s, f) => s + Number(f.saldo || 0), 0));
-      const puedeAplicar = tiene && limite > 0.005;
-      box.innerHTML = html`
-        <div style="border:1px solid ${tiene ? 'var(--ok)' : 'var(--line)'};border-radius:8px;padding:10px 12px;background:${tiene ? 'var(--okbg)' : 'var(--bg)'}">
-          <label class="inline-check" style="font-weight:600;color:${tiene ? 'var(--oktext)' : 'var(--mut)'}">
-            <input type="checkbox" id="pago-usar-prepago" ${puedeAplicar ? '' : 'disabled'}> Aplicar a saldo de prepago
-          </label>
-          ${tiene
-            ? html`<div style="margin-top:6px;font-size:13px;color:var(--oktext)">Saldo disponible: <b>${money(saldo, 2)}</b></div>
-                   ${puedeAplicar ? '' : html`<div style="margin-top:4px;font-size:12px;color:var(--mut)">No hay facturas pendientes para aplicar el prepago</div>`}
-                   <div id="pago-prepago-monto-wrap" style="margin-top:8px;display:none">
-                     <label style="font-size:13px">Monto a aplicar desde prepago (MXN)<input id="pago-prepago-monto" type="number" step="0.01" min="0.01" max="${limite}" value="${limite.toFixed(2)}" style="width:160px;font-weight:600"></label>
-                   </div>`
-            : html`<div style="margin-top:4px;font-size:12px;color:var(--mut)">Cliente sin saldo de prepago</div>`}
-        </div>`.s;
-      const chk = $('#pago-usar-prepago');
-      if (puedeAplicar && chk) {
-        chk.addEventListener('change', () => {
-          actualizarVisibilidad();
-          if (chk.checked) distribuirFIFO(parseFloat($('#pago-prepago-monto').value) || 0);
-        });
-        const prepInp = $('#pago-prepago-monto');
-        if (prepInp) {
-          prepInp.addEventListener('input', () => {
-            $('#pago-monto').value = prepInp.value;
-            distribuirFIFO(parseFloat(prepInp.value) || 0);
-          });
-        }
-      }
-    };
+    const renderPrepagoBox = () => {};
     const actualizarVisibilidad = () => {
       const chk = $('#pago-usar-prepago');
       const usandoPrepago = tienePrepago && chk && chk.checked;
@@ -298,17 +503,14 @@
         return;
       }
       try {
-        const [d, prepData] = await Promise.all([
-          api('/api/cliente?' + qs({ k: c.k_cliente, corte: S.corte })),
-          api('/api/prepago/saldo?' + qs({ k: c.k_cliente })).catch(() => ({ saldo_prepago: 0 })),
-        ]);
+        const d = await api('/api/cliente?' + qs({ k: c.k_cliente, corte: S.corte }));
         const pagoMonto = $('#pago-monto');
         if (!pagoMonto) return;
         facs = d.abiertas.slice().sort((a, b) => fifoKey(a).localeCompare(fifoKey(b)));
         deudaTotal = facs.reduce((sum, f) => sum + Number(f.saldo || 0), 0);
         pagoMonto.max = deudaTotal.toFixed(2);
-        saldoPrepago = prepData.saldo_prepago || 0;
-        tienePrepago = saldoPrepago > 0.005;
+        saldoPrepago = 0;
+        tienePrepago = false;
         renderFacs();
         renderPrepagoBox(saldoPrepago, tienePrepago);
         actualizarVisibilidad();
@@ -324,7 +526,6 @@
           <label id="pago-metodo-wrap">Método<select id="pago-metodo" required><option value="">Selecciona un método…</option>${S.cat.metodos_pago.map((m) => opt(m.nombre, m.nombre))}</select></label>
           <label id="pago-banco-wrap" style="display:none">Banco<select id="pago-banco"><option value="">Selecciona un banco…</option>${S.cat.bancos.map((b) => opt(b.id, b.nombre))}</select></label>
           <label id="pago-monto-wrap">Monto del pago ($)<input id="pago-monto" class="bigin" type="number" min="0.01" step="0.01" placeholder="0.00"></label>
-          <div id="pago-prepago-box" style="margin-top:6px;margin-bottom:6px"></div>
           <div id="pago-confirmacion" class="note info" role="status" aria-live="polite" style="margin:8px 0" hidden></div>
           <div class="err" id="pagoErr" role="alert" aria-live="assertive"></div>
           <button type="button" id="btn-fifo" class="btn gray block">Distribuir Automático (FIFO)</button>
@@ -824,9 +1025,9 @@
         <td>${u.ultimo_login ? u.ultimo_login.slice(0, 16).replace('T', ' ') : '—'}</td><td>${u.activo ? html`<span class="badge b-ok">Activo</span>` : html`<span class="badge b-mut">Inactivo</span>`}</td>
         <td><button class="btn small" data-act="editUsuario" data-u="${JSON.stringify(u)}">Editar</button> <button class="btn small" data-act="resetUsuario" data-id="${u.id}" data-name="${u.usuario}">Restablecer contraseña</button></td></tr>`)}</tbody></table></div>
       <div class="grid g2" style="margin-top:18px"><div class="card"><h3>Permisos por rol</h3><div class="tablewrap nomax" style="border:0"><table><tbody>
-        <tr><td><b>Administrador General</b></td><td class="wrap">Todo: consultar, registrar abonos y consumos de débito, aplicar pagos, gestionar clientes y crédito, administrar usuarios, cargar el Excel y ver la bitácora.</td></tr>
-        <tr><td><b>Gestor de Estación</b></td><td class="wrap">Consultar, exportar, registrar débito y pagos, gestiones de cobranza, altas de clientes y edición de crédito (dentro de su estación).</td></tr>
-        <tr><td><b>Supervisor</b></td><td class="wrap">Puede anular prepagos, modificar importes de despachos pendientes y anular pagos dentro de sus estaciones asignadas; no registra pagos ni administra usuarios.</td></tr>
+        <tr><td><b>Administrador General</b></td><td class="wrap">Todo: consultar, registrar y aplicar anticipos, aplicar pagos, gestionar clientes y crédito, administrar usuarios, cargar el Excel y ver la bitácora.</td></tr>
+        <tr><td><b>Gestor de Estación</b></td><td class="wrap">Consultar, exportar, registrar y aplicar anticipos, registrar pagos, gestiones de cobranza, altas de clientes y edición de crédito (dentro de su estación).</td></tr>
+        <tr><td><b>Supervisor</b></td><td class="wrap">Puede cancelar Facturas de Anticipo y aplicaciones, modificar importes de despachos pendientes y anular pagos dentro de sus estaciones asignadas; no registra pagos ni anticipos ni administra usuarios.</td></tr>
         <tr><td><b>Consulta</b></td><td class="wrap">Solo lectura y exportación.</td></tr></tbody></table></div></div>
         <div class="card"><h3>Bitácora de actividad</h3><p class="mut">Registro de accesos, pagos, movimientos de débito, cambios de crédito, altas y cargas de datos.</p><a class="btn dark" href="#/bitacora">Ver bitácora</a></div></div>`);
     const formU = $('#formU');
