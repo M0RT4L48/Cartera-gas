@@ -451,6 +451,9 @@ server.listen(0, '127.0.0.1', async () => {
     assert.ok(descarga.data.includes('Factura de Anticipo'));
     assert.ok(descarga.data.includes('Nota de Crédito (Aplicación)'));
     assert.ok(!descarga.data.includes('UUID'));
+    const encabezadosEstadoCuenta = descarga.data.split(/\r?\n/, 1)[0];
+    assert.ok(!encabezadosEstadoCuenta.includes('Moneda'));
+    assert.ok(!encabezadosEstadoCuenta.includes('Tipo de cambio'));
     assert.ok(!descarga.data.includes('Pago CxC') && !descarga.data.includes('Aplicación de anticipo'));
     assert.ok((await call('a', 'GET', '/api/bitacora')).data.rows.some((row) => row.accion === 'EXPORT' && row.detalle.includes(`estado_cuenta ${k}`)));
 

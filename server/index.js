@@ -487,8 +487,6 @@ async function api(req, res, url) {
             saldo_pendiente: nodo.saldo_pendiente,
             naturaleza: nodo.naturaleza,
             estatus: nodo.estatus,
-            moneda: nodo.moneda,
-            tipo_cambio: nodo.tipo_cambio,
             equivalente_mxn: nodo.equivalente_mxn,
             nivel: nodo.nivel,
             documento_padre: padre,
@@ -501,8 +499,8 @@ async function api(req, res, url) {
       return csv(res, `estado_cuenta_${nombre}.csv`, [
         ['fecha', 'Fecha'], ['tipo_documento', 'Tipo de Documento'], ['folio', 'Serie/Folio'],
         ['concepto', 'Concepto'], ['fecha_vencimiento', 'Fecha de vencimiento'], ['importe_original', 'Importe Original'],
-        ['saldo_pendiente', 'Saldo Pendiente'], ['naturaleza', 'Naturaleza'], ['estatus', 'Estatus'], ['moneda', 'Moneda'],
-        ['tipo_cambio', 'Tipo de cambio'], ['equivalente_mxn', 'Saldo equivalente MXN'],
+        ['saldo_pendiente', 'Saldo Pendiente'], ['naturaleza', 'Naturaleza'], ['estatus', 'Estatus'],
+        ['equivalente_mxn', 'Saldo equivalente MXN'],
         ['importe_aplicado', 'Importe Aplicado'],
         ['nivel', 'Nivel'], ['documento_padre', 'Documento padre'], ['validacion', 'Validación'],
       ], [...resumenRows, ...filasJerarquia]);
