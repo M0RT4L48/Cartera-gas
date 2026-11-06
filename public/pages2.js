@@ -1020,7 +1020,7 @@
       } else {
         const a = await api('/api/aplicaciones-anticipo?' + qs({ estacion: S.est, size: 200 }));
         setView(html`<div class="h"><h2>Reporte de Cobranza</h2><p>Aplicaciones de Facturas de Anticipo a facturas de CxC. El historial incluye aplicaciones activas y canceladas.</p></div>${tabsCob()}
-          <div class="tablewrap"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Estación</th><th>Aplicación</th><th>Factura de Anticipo</th><th>Factura CxC</th><th>Referencia</th><th class="n">Importe</th><th>Estado</th><th>Usuario</th></tr></thead><tbody>
+          <div class="tablewrap"><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Estación</th><th>Aplicación</th><th>Factura de Anticipo</th><th>Factura CxC</th><th>Nota de Crédito</th><th class="n">Importe</th><th>Estado</th><th>Usuario</th></tr></thead><tbody>
           ${a.rows.length ? a.rows.map((x) => html`<tr><td>${fdate(x.fecha_aplicacion)}</td><td class="wrap"><a href="#/cliente/${encodeURIComponent(x.k_cliente)}">${x.cliente}</a></td><td>${corto(x.estacion)}</td>
             <td>AP-${x.id}</td><td>${x.serie ? `${x.serie}-` : ''}${x.anticipo_folio}</td><td>${x.factura_folio}</td>
             <td class="wrap">${x.estado === 'CANCELADA' ? x.motivo_cancelacion || x.referencia || '' : x.referencia || ''}</td>

@@ -498,7 +498,7 @@
             <td class="n">${money(a.importe_original, 2)}</td><td class="n">${money(a.importe_aplicado, 2)}</td><td class="n">${money(a.saldo_disponible, 2)}</td><td>${a.moneda}</td><td>${badge(a.estado)}</td></tr>`)}</tbody></table></div>`
           : html`<div class="empty">El cliente no tiene Facturas de Anticipo.</div>`}
         <h3 style="margin-top:18px">Movimientos de aplicación de anticipos</h3>
-        ${d.aplicaciones_anticipo_historial.length ? html`<div class="tablewrap nomax"><table><thead><tr><th>Fecha</th><th>Aplicación</th><th>Factura de Anticipo</th><th>Factura CxC</th><th>Estación</th><th class="n">Importe</th><th>Estado</th><th>Usuario</th><th>Referencia / motivo</th></tr></thead><tbody>
+        ${d.aplicaciones_anticipo_historial.length ? html`<div class="tablewrap nomax"><table><thead><tr><th>Fecha</th><th>Aplicación</th><th>Factura de Anticipo</th><th>Factura CxC</th><th>Estación</th><th class="n">Importe</th><th>Estado</th><th>Usuario</th><th>Nota de Crédito / motivo</th></tr></thead><tbody>
           ${d.aplicaciones_anticipo_historial.map((a) => html`<tr><td>${fdate(a.fecha_aplicacion)}</td><td>AP-${a.id}</td>
             <td>${a.serie ? `${a.serie}-` : ''}${a.folio}</td><td>${a.no_factura}</td><td>${corto(a.estacion)}</td>
             <td class="n">${money(a.importe_aplicado, 2)} ${a.moneda}</td><td>${badge(a.estado)}</td><td>${a.usuario || '—'}</td>
