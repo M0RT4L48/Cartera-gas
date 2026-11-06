@@ -137,6 +137,8 @@ server.listen(0, '127.0.0.1', async () => {
   await t('clientes, detalle y lista para selectores', async () => {
     const r = await call('a', 'GET', '/api/clientes?corte=2026-10-13&filtro=excedido'); assert.equal(r.data.total, dash.kpis.excedidos);
     const d = await call('a', 'GET', '/api/cliente?corte=2026-10-13&k=' + enc(r.data.rows[0].k_cliente)); assert.equal(d.data.cliente.riesgo, 'EXCEDIDO');
+    for (const campo of ['abiertas', 'por_facturar', 'debito', 'anticipos', 'aplicaciones_anticipo_historial', 'gestiones', 'pagos', 'historial'])
+      assert.ok(Array.isArray(d.data[campo]), `El detalle del cliente debe incluir ${campo} como arreglo`);
     assert.equal((await call('a', 'GET', '/api/clientes-lista')).data.rows.length, 330);
     assert.equal((await call('a', 'GET', '/api/clientes-lista?con_facturas=1&corte=2026-10-13')).data.rows.length, dash.kpis.clientes_con_saldo);
   });

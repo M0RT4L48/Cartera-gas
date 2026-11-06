@@ -131,7 +131,14 @@
   // ---- detalle de factura ----
   CG.acts.factura = async (el) => {
     try {
-      const d = await api('/api/factura?' + qs({ k: el.dataset.k, est: el.dataset.est, no: el.dataset.no, corte: S.corte }));
+      const respuesta = await api('/api/factura?' + qs({ k: el.dataset.k, est: el.dataset.est, no: el.dataset.no, corte: S.corte }));
+      const d = {
+        ...respuesta,
+        despachos: Array.isArray(respuesta.despachos) ? respuesta.despachos : [],
+        pagos: Array.isArray(respuesta.pagos) ? respuesta.pagos : [],
+        aplicaciones_anticipo_historial: Array.isArray(respuesta.aplicaciones_anticipo_historial)
+          ? respuesta.aplicaciones_anticipo_historial : [],
+      };
       const f = d.factura;
       modal(html`
         <h2>Factura ${f.no_factura} ${badge(f.estado)}</h2>
@@ -451,7 +458,21 @@
     k = decodeURIComponent(k); if (!keepTab && k !== lastK) cliTab = 'abiertas'; lastK = k;
     loading();
     let d;
-    try { d = await api('/api/cliente?' + qs({ k, corte: S.corte })); } catch (e) { return errorView(e); }
+    try {
+      const respuesta = await api('/api/cliente?' + qs({ k, corte: S.corte }));
+      d = {
+        ...respuesta,
+        abiertas: Array.isArray(respuesta.abiertas) ? respuesta.abiertas : [],
+        por_facturar: Array.isArray(respuesta.por_facturar) ? respuesta.por_facturar : [],
+        debito: Array.isArray(respuesta.debito) ? respuesta.debito : [],
+        anticipos: Array.isArray(respuesta.anticipos) ? respuesta.anticipos : [],
+        aplicaciones_anticipo_historial: Array.isArray(respuesta.aplicaciones_anticipo_historial)
+          ? respuesta.aplicaciones_anticipo_historial : [],
+        gestiones: Array.isArray(respuesta.gestiones) ? respuesta.gestiones : [],
+        pagos: Array.isArray(respuesta.pagos) ? respuesta.pagos : [],
+        historial: Array.isArray(respuesta.historial) ? respuesta.historial : [],
+      };
+    } catch (e) { return errorView(e); }
     const c = d.cliente, maxA = Math.max(1, ...d.aging.map((a) => a.monto));
     const tab = (id, label, n) => html`<button class="${cliTab === id ? 'on' : ''}" data-tab="${id}">${label}${n != null ? html` <span class="badge b-mut">${n}</span>` : ''}</button>`;
     const body = {
