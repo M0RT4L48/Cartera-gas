@@ -538,7 +538,7 @@ async function alertas({ corte, est, estaciones }) {
 async function estadoCuenta({ k, corte }) {
   const rows = await q.all(`SELECT * FROM (
       SELECT f.fecha_factura fecha, 'Factura' tipo_documento, f.no_factura folio,
-        'Factura con ' || f.despachos || ' despacho(s)' concepto, f.fecha_vencimiento,
+        'Desglose de despachos asociados' concepto, f.fecha_vencimiento,
         f.importe importe_original, f.abono+f.pagos_app+f.aplicaciones_anticipo importe_aplicado,
         f.saldo saldo_pendiente, 'Por Cobrar' naturaleza,
         CASE WHEN f.dias_vencido>0 THEN 'Vencida' ELSE 'Pendiente' END estatus, 'MXN' moneda,
@@ -586,6 +586,7 @@ async function estadoCuenta({ k, corte }) {
   const despachos = await q.all(`SELECT id, origen, estacion_id, no_factura, fecha_despacho, despacho,
       producto, grupo, importe, abono, estatus
     FROM v_cxc WHERE k_cliente=? AND no_factura IS NOT NULL
+      AND estatus NOT IN ('POR FACTURAR','CANCELADO','CANCELADA')
     ORDER BY fecha_despacho, despacho, id`, k);
   const claveFactura = (estacionId, noFactura) => `${estacionId}\u001f${noFactura}`;
   const facturasPorClave = new Map(facturas.map((factura) => [
@@ -605,6 +606,26 @@ async function estadoCuenta({ k, corte }) {
     aplicacionesPorAnticipo.get(aplicacion.factura_anticipo_id).push(aplicacion);
   }
   const redondea = (valor) => redondeaCentavos(Number(valor) || 0);
+  const crearNodoDespacho = (despacho, padreId, indice, nivel = 2) => ({
+    id: `${padreId}:despacho:${indice}`,
+    tipo_documento: 'Despacho',
+    fecha: despacho.fecha_despacho,
+    folio: despacho.despacho || String(despacho.id),
+    concepto: despacho.producto || despacho.grupo || 'Despacho facturado',
+    fecha_vencimiento: null,
+    importe_original: redondea(despacho.importe),
+    importe_aplicado: redondea(despacho.abono),
+    saldo_pendiente: null,
+    moneda: 'MXN',
+    tipo_cambio: 1,
+    equivalente_mxn: null,
+    naturaleza: 'Detalle de factura',
+    estatus: despacho.estatus,
+    nivel,
+    solo_referencia: true,
+    validaciones: [],
+    hijos: [],
+  });
   const raiz = rows.filter((row) => row.tipo_documento !== 'Factura de Anticipo').map((row, index) => ({
     id: `documento:${index}`,
     tipo_documento: row.tipo_documento,
@@ -625,6 +646,34 @@ async function estadoCuenta({ k, corte }) {
     validaciones: [],
     hijos: [],
   }));
+  for (const facturaNode of raiz.filter((nodo) => nodo.tipo_documento === 'Factura')) {
+    const factura = facturas.find((item) => item.no_factura === facturaNode.folio);
+    if (!factura) continue;
+    const despachoFactura = despachosPorClave.get(claveFactura(factura.estacion_id, factura.no_factura)) || [];
+    facturaNode.hijos = despachoFactura.map((despacho, indice) =>
+      crearNodoDespacho(despacho, facturaNode.id, indice));
+    const sumaDespachos = redondea(despachoFactura.reduce((suma, despacho) => suma + despacho.importe, 0));
+    if (factura.despachos !== despachoFactura.length) {
+      facturaNode.validaciones.push({
+        codigo: 'CANTIDAD_DESPACHOS',
+        severidad: 'advertencia',
+        esperado: factura.despachos,
+        registrado: despachoFactura.length,
+        diferencia: factura.despachos - despachoFactura.length,
+        mensaje: 'La cantidad de despachos asociados no coincide con el conteo usado para agrupar la factura.',
+      });
+    }
+    if (Math.abs(redondea(factura.importe) - sumaDespachos) > EPS) {
+      facturaNode.validaciones.push({
+        codigo: 'TOTAL_DESPACHOS',
+        severidad: 'advertencia',
+        esperado: redondea(factura.importe),
+        registrado: sumaDespachos,
+        diferencia: redondea(factura.importe - sumaDespachos),
+        mensaje: 'La suma de los despachos no coincide con el importe original de la factura.',
+      });
+    }
+  }
   for (const anticipo of anticipos) {
     const aplicacionesAnticipo = aplicacionesPorAnticipo.get(anticipo.id) || [];
     const montoAplicadoCalculado = redondea(aplicacionesAnticipo
@@ -764,26 +813,8 @@ async function estadoCuenta({ k, corte }) {
           solo_referencia: true,
           validaciones: validacionesFactura,
           // Los despachos se muestran como composición de la factura; no hay asignación monetaria NC-despacho.
-          hijos: dispatchesFactura.map((despacho, indiceDespacho) => ({
-            id: `${facturaNodeId(notaNode.id, indiceFactura)}:despacho:${indiceDespacho}`,
-            tipo_documento: 'Despacho',
-            fecha: despacho.fecha_despacho,
-            folio: despacho.despacho || String(despacho.id),
-            concepto: despacho.producto || despacho.grupo || 'Despacho facturado',
-            fecha_vencimiento: null,
-            importe_original: redondea(despacho.importe),
-            importe_aplicado: redondea(despacho.abono),
-            saldo_pendiente: null,
-            moneda: 'MXN',
-            tipo_cambio: 1,
-            equivalente_mxn: null,
-            naturaleza: 'Detalle de factura',
-            estatus: despacho.estatus,
-            nivel: 4,
-            solo_referencia: true,
-            validaciones: [],
-            hijos: [],
-          })),
+          hijos: dispatchesFactura.map((despacho, indiceDespacho) =>
+            crearNodoDespacho(despacho, facturaNodeId(notaNode.id, indiceFactura), indiceDespacho, 4)),
         };
         notaNode.hijos.push(facturaNode);
       }

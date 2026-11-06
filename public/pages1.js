@@ -560,7 +560,7 @@
         const importeEstado = (valor, moneda) => valor == null ? '—' : `${money(valor, 2)} ${moneda || 'MXN'}`;
         const filasTabla = filasEstado.map(({ nodo, padre, profundidad }) => {
           const expandible = Boolean(nodo.hijos && nodo.hijos.length);
-          const expandibleDespachos = nodo.tipo_documento === 'Factura de Producto';
+          const expandibleDespachos = nodo.tipo_documento === 'Factura de Producto' || nodo.tipo_documento === 'Factura';
           const validaciones = (nodo.validaciones || []).map((validacion) => validacion.mensaje).join(' ');
           return html`<tr data-node-id="${nodo.id}" data-parent-id="${padre}" style="${padre ? 'display:none' : ''}">
             <td>${fdate(nodo.fecha)}</td>

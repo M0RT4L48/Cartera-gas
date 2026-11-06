@@ -437,6 +437,14 @@ server.listen(0, '127.0.0.1', async () => {
     assert.ok(!documentos.some((row) => row.folio.includes('AGOTADO') || row.folio.includes('CANCELADO')));
     assert.ok(!JSON.stringify(documentos).includes('Pago CxC'));
     assert.ok(!JSON.stringify(documentos).includes('Aplicación de anticipo'));
+    const facturaRaiz = completo.data.jerarquia.find((nodo) => nodo.tipo_documento === 'Factura'
+      && nodo.folio === 'FACTURA-ESTADO-CTA');
+    assert.ok(facturaRaiz, 'La factura principal debe aparecer en la jerarquía');
+    assert.equal(facturaRaiz.concepto, 'Desglose de despachos asociados');
+    assert.equal(facturaRaiz.hijos.length, 5, 'La fila principal debe incluir los cinco despachos asociados');
+    assert.equal(facturaRaiz.hijos.reduce((suma, nodo) => suma + nodo.importe_original, 0), 250);
+    assert.ok(facturaRaiz.hijos.every((nodo) => nodo.tipo_documento === 'Despacho' && nodo.fecha && nodo.estatus));
+    assert.ok(facturaRaiz.hijos.some((nodo) => nodo.importe_original === 0));
     const anticipoJerarquia = completo.data.jerarquia.find((nodo) => nodo.folio === 'ANT-ESTADO-CTA');
     assert.ok(anticipoJerarquia, 'La jerarquía debe incluir el anticipo con aplicaciones activas');
     const notaCredito = anticipoJerarquia.hijos.find((nodo) => nodo.tipo_documento === 'Nota de Crédito (Aplicación)');
@@ -471,6 +479,10 @@ server.listen(0, '127.0.0.1', async () => {
     });
     assert.equal(aplicarFacturaDosDespachos.status, 201, JSON.stringify(aplicarFacturaDosDespachos.data));
     const estadoDosDespachos = await call('a', 'GET', ruta);
+    const facturaRaizDos = estadoDosDespachos.data.jerarquia.find((nodo) => nodo.tipo_documento === 'Factura'
+      && nodo.folio === 'FACTURA-ESTADO-CTA-DOS');
+    assert.equal(facturaRaizDos.hijos.length, 2, 'La fila principal debe desglosar ambos despachos');
+    assert.equal(facturaRaizDos.hijos.reduce((suma, nodo) => suma + nodo.importe_original, 0), 100);
     const anticipoDosDespachos = estadoDosDespachos.data.jerarquia.find((nodo) => nodo.folio === 'ANT-ESTADO-CTA');
     const notaDosDespachos = anticipoDosDespachos.hijos.find((nodo) => nodo.folio === 'NC-ESTADO-CTA-DOS');
     const facturaRelacionadaDos = notaDosDespachos.hijos.find((nodo) => nodo.tipo_documento === 'Factura de Producto');
