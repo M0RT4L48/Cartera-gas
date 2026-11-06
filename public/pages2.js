@@ -354,18 +354,18 @@
     CG.acts.agregarAnticipo = () => {
     clienteOpciones = null;
     opciones = { anticipos: [], facturas: [] };
-    modal(html`<h2>Agregar Anticipo</h2><div class="form">
+    modal(html`<h2>Aplicar Anticipo</h2><div class="form">
       <label>Cliente${clientePick.html}</label>
       <label>Factura de Anticipo<select id="selAnticipo"><option value="">Selecciona un cliente primero…</option></select></label>
       <label>Factura existente del despacho<select id="selFacturaDespacho"><option value="">Selecciona un cliente primero…</option></select></label>
       <div id="resumenAnticipo" class="full"></div><div id="resumenFactura" class="full"></div>
       <label>Importe a aplicar (MXN)<input id="montoAplicacion" type="number" min="0.01" step="0.01" required></label>
       <label>Fecha de aplicación<input id="fechaAplicacion" type="date" value="${hoyLocal()}" max="${hoyLocal()}" required></label>
-      <label>Referencia<input id="referenciaAplicacion" maxlength="100"></label>
+      <label>Nota de Crédito<input id="referenciaAplicacion" maxlength="100"></label>
       <label class="full">Observaciones<textarea id="observacionesAplicacion" rows="2" maxlength="1000"></textarea></label>
       <div class="full err" id="aplicacionErr"></div>
       <div class="full actions"><button class="btn" type="button" data-act="cerrar">Cancelar</button>
-        <button class="btn accent" id="btnAplicarAnticipo" type="button">Registrar aplicación</button></div>
+        <button class="btn accent" id="btnAplicarAnticipo" type="button">Aplicar Anticipo</button></div>
     </div>`, { wide: true });
     const clienteAplicacion = $('#selClienteAnticipo');
     const cambiarClienteAplicacion = async () => {
