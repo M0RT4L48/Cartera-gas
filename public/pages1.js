@@ -356,19 +356,8 @@
         ${S.cat.nombre_empresa ? html`<button class="btn small danger" data-act="deleteNombreEmpresa">Eliminar nombre de la empresa</button>` : ''}
       </div>` : ''}
       ` : ''}
-      ${soloClientes ? html`<div class="h"><h3>Clientes</h3></div>
-      ${can('clientes') ? html`<form id="formCli" class="inline-form">
-        <label style="flex:1;min-width:220px">Nombre del cliente *<input name="cliente" required maxlength="150"></label>
-        <label>Estación *<select name="estacion_id" ${S.user.estaciones && S.user.estaciones.length === 1 ? 'disabled' : ''}>${estOpts.map((e) => opt(e.id, corto(e.nombre), S.est || ''))}</select></label>
-        <label style="width:120px">No. cliente<input name="no_cliente" maxlength="30"></label>
-        <label style="width:150px">RFC<input name="rfc" maxlength="13" style="text-transform:uppercase"></label>
-        <label style="width:130px">Límite ($)<input name="limite" type="number" min="0" step="0.01" placeholder="0.00"></label>
-        <label style="width:110px">Días crédito<input name="dias" type="number" min="0" max="365" step="1" placeholder="15"></label>
-        <label style="width:190px">Correo electrónico<input name="email" type="email" maxlength="254"></label>
-        <label style="width:150px">Teléfono<input name="telefono" type="tel" maxlength="40"></label>
-        <label style="width:190px">Modo de carga<select name="modo_carga">${opt('', 'Selecciona un modo')}${modosCargaCliente.map((modo) => opt(modo, modo))}</select></label>
-        <button class="btn dark" type="submit">+ Agregar cliente</button>
-        <div class="err" id="cliErr" style="flex-basis:100%"></div></form>` : ''}
+      ${soloClientes ? html`<div class="h" style="display:flex;align-items:center;justify-content:space-between;gap:12px"><h3>Clientes</h3>
+        ${can('clientes') ? html`<button class="btn dark" data-act="nuevoCliente">+ Agregar nuevo cliente</button>` : ''}</div>
       <div class="bar" id="filtros">
         <label>Buscar<input data-f="q" value="${st.q}" placeholder="Nombre, número o RFC…" style="min-width:240px"></label>
         <label>Mostrar<select data-f="filtro">${opt('', 'Todos', st.filtro)}${opt('saldo', 'Con saldo pendiente', st.filtro)}${opt('vencido', 'Con saldo vencido', st.filtro)}${opt('excedido', 'Sobre su límite', st.filtro)}${opt('sinlimite', 'Con saldo y sin límite', st.filtro)}${opt('favor', 'Con anticipo disponible', st.filtro)}</select></label>
@@ -383,12 +372,37 @@
       };
     }
     CG.acts.exportCli = () => { location.href = '/api/clientes?' + qs(gp({ ...st, formato: 'csv' })); };
-    const fc = $('#formCli');
-    if (fc) fc.onsubmit = async (e) => {
-      e.preventDefault(); const b = Object.fromEntries(new FormData(fc)); const ids = Array.isArray(S.user.estaciones) ? S.user.estaciones : []; if (ids.length === 1) b.estacion_id = ids[0];
-      const btn = fc.querySelector('button'); btn.disabled = true;
-      try { await api('/api/clientes', { method: 'POST', body: b }); toast('Cliente guardado correctamente'); S.clientes = null; fc.reset(); $('#cliErr').textContent = ''; load(); }
-      catch (er) { $('#cliErr').textContent = er.message; } finally { btn.disabled = false; }
+    CG.acts.nuevoCliente = () => {
+      modal(html`<h2>Agregar nuevo cliente</h2><form id="formCli" class="form">
+        <label>Nombre del cliente *<input name="cliente" required maxlength="150"></label>
+        <label>Estación *<select name="estacion_id" ${S.user.estaciones && S.user.estaciones.length === 1 ? 'disabled' : ''}>${estOpts.map((e) => opt(e.id, corto(e.nombre), S.est || ''))}</select></label>
+        <label>No. cliente<input name="no_cliente" maxlength="30"></label>
+        <label>RFC<input name="rfc" maxlength="13" style="text-transform:uppercase"></label>
+        <label>Límite ($)<input name="limite" type="number" min="0" step="0.01" placeholder="0.00"></label>
+        <label>Días crédito<input name="dias" type="number" min="0" max="365" step="1" placeholder="15"></label>
+        <label>Correo electrónico<input name="email" type="email" maxlength="254"></label>
+        <label>Teléfono<input name="telefono" type="tel" maxlength="40"></label>
+        <label>Modo de carga<select name="modo_carga">${opt('', 'Selecciona un modo')}${modosCargaCliente.map((modo) => opt(modo, modo))}</select></label>
+        <div class="full err" id="cliErr"></div><div class="full actions">
+          <button type="button" class="btn" data-act="cerrar">Cancelar</button><button class="btn dark" type="submit">Guardar cliente</button>
+        </div></form>`, { wide: true });
+      const fc = $('#formCli');
+      fc.onsubmit = async (e) => {
+        e.preventDefault();
+        const b = Object.fromEntries(new FormData(fc));
+        const ids = Array.isArray(S.user.estaciones) ? S.user.estaciones : [];
+        if (ids.length === 1) b.estacion_id = ids[0];
+        const btn = fc.querySelector('[type="submit"]');
+        btn.disabled = true;
+        try {
+          await api('/api/clientes', { method: 'POST', body: b });
+          toast('Cliente guardado correctamente');
+          closeModal();
+          S.clientes = null;
+          load();
+        } catch (er) { $('#cliErr').textContent = er.message; }
+        finally { btn.disabled = false; }
+      };
     };
     const fb = $('#formBanco');
     if (fb) fb.onsubmit = async (e) => {
