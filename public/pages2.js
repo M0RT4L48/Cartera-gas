@@ -171,7 +171,7 @@
       } catch (e) { $('#tablaAnticipos').innerHTML = html`<div class="note">${e.message}</div>`.s; }
     };
     setView(html`
-      <div class="h"><h2>Facturas de Anticipo</h2><p>Consulta anticipos individuales y sus saldos; cada aplicación queda ligada a una factura existente de despacho.</p>
+      <div class="h" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><div><h2>Facturas de Anticipo</h2><p>Consulta anticipos individuales y sus saldos; cada aplicación queda ligada a una factura existente de despacho.</p></div>
         ${can('anticipos_crear') ? html`<button class="btn dark" data-act="nuevaFacturaAnticipo">+ Nueva Factura de Anticipo</button>` : ''}</div>
       <div class="bar" id="filtrosAnticipos">
         <label>Cliente, folio o UUID<input data-f="q" placeholder="Buscar…" style="min-width:220px"></label>
