@@ -718,7 +718,8 @@
             <td>${puedeFacturar || puedeEditarDespacho ? html`<button class="btn small" data-act="emitirFacturaCliente" data-k="${x.k_cliente}" data-cliente="${x.cliente}">${puedeFacturar ? 'Seleccionar despachos' : 'Modificar importes'}</button>` : ''}</td></tr>`) : html`<tr><td colspan="8" class="empty">Sin despachos por facturar.</td></tr>`}</tbody></table></div>`.s;
       } catch (e) { $('#tbl').innerHTML = html`<div class="note">${e.message}</div>`.s; }
     };
-    setView(html`<div class="h"><h2>Despachos por Facturar</h2><p>Despachos a crédito que aún no tienen factura emitida. También puedes registrar un monto de crédito pendiente para un cliente concreto.</p></div>
+    setView(html`<div class="h" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><div><h2>Despachos por Facturar</h2><p>Despachos a crédito que aún no tienen factura emitida. También puedes registrar un monto de crédito pendiente para un cliente concreto.</p></div>
+      ${puedeRegistrarDespachos ? html`<button class="btn dark" data-act="agregarDespacho">+ Agregar Despacho</button>` : ''}</div>
       ${can('facturas') ? html`<form id="formCargaPorFacturar" class="formcard" style="margin-bottom:18px">
         <h3>Cargar Despachos por facturar</h3>
         <div class="row2" style="align-items:end">
@@ -726,18 +727,6 @@
           <button class="btn accent" type="submit">Cargar Despachos por facturar</button>
         </div>
         <div id="cargaPorFacturarOut" role="status" aria-live="polite" style="margin-top:10px"></div>
-      </form>` : ''}
-      ${puedeRegistrarDespachos ? html`<form id="formPorFacturar" class="formcard" style="margin-bottom:18px">
-        <h3>Registrar monto pendiente por facturar</h3>
-        <div class="grid g4">
-          <label>Cliente${pick.html}</label>
-          <label>Monto ($)<input name="importe" type="number" min="0.01" step="0.01" required></label>
-          <label>Fecha de despacho<input name="fecha_despacho" type="date" max="${hoyLocal()}" value="${hoyLocal()}" required></label>
-          <label>Despacho<input name="despacho" maxlength="80" placeholder="Ej. Entrega 12/10"></label>
-          <label>Producto (opcional)<select name="producto">${opt('', 'Sin producto')}${S.cat.productos.map((p) => opt(p.nombre, p.nombre))}</select></label>
-        </div>
-        <div class="err" id="porFacturarErr" style="margin-top:8px"></div>
-        <button class="btn dark" type="submit" style="margin-top:12px">Guardar por facturar</button>
       </form>` : ''}
       <div class="bar" id="filtros"><label>Buscar cliente<input data-f="q" placeholder="Nombre…" style="min-width:240px"></label></div><div id="tbl"></div>`);
     $('#tbl').addEventListener('click', (event) => {
@@ -772,7 +761,19 @@
         } finally { btn.disabled = false; }
       };
     }
-    if (puedeRegistrarDespachos) {
+    if (puedeRegistrarDespachos) CG.acts.agregarDespacho = () => {
+      modal(html`<h2>Agregar Despacho</h2><form id="formPorFacturar" class="form">
+        <div class="full grid g2">
+          <label>Cliente${pick.html}</label>
+          <label>Monto ($)<input name="importe" type="number" min="0.01" step="0.01" required></label>
+          <label>Fecha de despacho<input name="fecha_despacho" type="date" max="${hoyLocal()}" value="${hoyLocal()}" required></label>
+          <label>Despacho<input name="despacho" maxlength="80" placeholder="Ej. Entrega 12/10"></label>
+          <label>Producto (opcional)<select name="producto">${opt('', 'Sin producto')}${S.cat.productos.map((p) => opt(p.nombre, p.nombre))}</select></label>
+        </div>
+        <div class="full err" id="porFacturarErr"></div>
+        <div class="full actions"><button type="button" class="btn" data-act="cerrar">Cancelar</button>
+          <button class="btn dark" type="submit">Guardar despacho</button></div>
+      </form>`, { wide: true });
       $('#formPorFacturar').onsubmit = async (e) => {
         e.preventDefault();
         const form = e.currentTarget;
@@ -784,11 +785,12 @@
         if (!(monto > 0)) { $('#porFacturarErr').textContent = 'El monto debe ser mayor a cero.'; return; }
         try {
           await api('/api/por-facturar', { method: 'POST', body: { k_cliente: cliente.k_cliente, importe: monto, fecha_despacho: data.fecha_despacho, despacho: data.despacho || 'PENDIENTE', producto: data.producto } });
-          toast('Monto registrado como por facturar.');
+          toast('Despacho agregado como pendiente por facturar.');
+          closeModal();
           await CG.route(true);
         } catch (err) { $('#porFacturarErr').textContent = err.message; }
       };
-    }
+    };
     bindFilters($('#filtros'), st, load); load();
   };
   CG.acts.emitirFacturaCliente = async (el) => {
