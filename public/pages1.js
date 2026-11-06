@@ -498,10 +498,10 @@
         modal(html`<div class="h"><h2>Estado de Cuenta actual · ${estado.cliente}</h2>
           <p>Documentos vigentes que determinan la posición financiera del cliente. Pagos y aplicaciones se consideran en los saldos, pero no se listan como movimientos.</p></div>
           <div class="grid g4" style="margin-bottom:16px">
-            <div class="kpi mini"><span class="l">Cartera pendiente</span><span class="v">${money(estado.resumen.cartera_pendiente, 2)}</span></div>
-            <div class="kpi mini k-amber"><span class="l">Despachos pendientes de facturar</span><span class="v">${money(estado.resumen.despachos_pendientes, 2)}</span></div>
-            <div class="kpi mini k-green"><span class="l">Anticipos disponibles (equivalente MXN)</span><span class="v">${money(estado.resumen.anticipos_disponibles, 2)}</span></div>
-            <div class="kpi mini ${estado.resumen.posicion_neta > 0 ? 'k-red' : 'k-green'}"><span class="l">Posición neta del cliente</span><span class="v">${money(estado.resumen.posicion_neta, 2)}</span></div>
+            <div class="kpi mini"><span class="l">Factura</span><span class="v">${money(estado.resumen.cartera_pendiente, 2)}</span></div>
+            <div class="kpi mini k-amber"><span class="l">Despachos</span><span class="v">${money(estado.resumen.despachos_pendientes, 2)}</span></div>
+            <div class="kpi mini k-green"><span class="l">Anticipos</span><span class="v">${money(estado.resumen.anticipos_disponibles, 2)}</span></div>
+            <div class="kpi mini ${estado.resumen.posicion_neta > 0 ? 'k-red' : 'k-green'}"><span class="l">Total</span><span class="v">${money(estado.resumen.posicion_neta, 2)}</span></div>
           </div>
           <div class="tablewrap nomax"><table><thead><tr><th>Fecha</th><th>Tipo de Documento</th><th>Serie/Folio</th><th>UUID</th><th>Concepto</th><th>Vencimiento</th>
             <th class="n">Importe Original</th><th class="n">Saldo Pendiente</th><th>Tipo de cambio</th><th class="n">Equivalente MXN</th><th>Naturaleza</th><th>Estatus</th></tr></thead><tbody>
