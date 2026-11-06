@@ -317,7 +317,10 @@
     };
     const estOpts = S.cat.estaciones;
     setView(html`
-      <div class="h"><h2>${soloClientes ? 'Catálogo de clientes' : 'Gestión de catálogos'}</h2><p>${soloClientes ? 'Administra clientes, crédito y consulta sus saldos unificados de CxC y débito.' : 'Administra bancos, métodos de pago y productos disponibles en los despachos.'}</p></div>
+      <div class="h" style="${soloClientes ? 'display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap' : ''}">
+        <div><h2>${soloClientes ? 'Catálogo de clientes' : 'Gestión de catálogos'}</h2><p>${soloClientes ? 'Administra clientes, crédito y consulta sus saldos unificados de CxC y débito.' : 'Administra bancos, métodos de pago y productos disponibles en los despachos.'}</p></div>
+        ${soloClientes && can('clientes') ? html`<button class="btn dark" data-act="nuevoCliente">+ Agregar nuevo cliente</button>` : ''}
+      </div>
       ${!soloClientes ? html`
       <div class="card" style="margin-bottom:18px"><h3>Catálogo de bancos</h3>
         ${can('usuarios') ? html`<form id="formBanco" class="inline-form" style="margin-bottom:12px">
@@ -356,9 +359,7 @@
         ${S.cat.nombre_empresa ? html`<button class="btn small danger" data-act="deleteNombreEmpresa">Eliminar nombre de la empresa</button>` : ''}
       </div>` : ''}
       ` : ''}
-      ${soloClientes ? html`<div class="h" style="display:flex;align-items:center;justify-content:space-between;gap:12px"><h3>Clientes</h3>
-        ${can('clientes') ? html`<button class="btn dark" data-act="nuevoCliente">+ Agregar nuevo cliente</button>` : ''}</div>
-      <div class="bar" id="filtros">
+      ${soloClientes ? html`<div class="bar" id="filtros">
         <label>Buscar<input data-f="q" value="${st.q}" placeholder="Nombre, número o RFC…" style="min-width:240px"></label>
         <label>Mostrar<select data-f="filtro">${opt('', 'Todos', st.filtro)}${opt('saldo', 'Con saldo pendiente', st.filtro)}${opt('vencido', 'Con saldo vencido', st.filtro)}${opt('excedido', 'Sobre su límite', st.filtro)}${opt('sinlimite', 'Con saldo y sin límite', st.filtro)}${opt('favor', 'Con anticipo disponible', st.filtro)}</select></label>
         <span class="sp"></span>${can('export') ? html`<button class="btn dark" data-act="exportCli">⬇ CSV</button>` : ''}</div><div id="tbl"></div>`
