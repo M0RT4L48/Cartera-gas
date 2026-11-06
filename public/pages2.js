@@ -338,21 +338,9 @@
       } catch (e) { $('#tablaAplicacionesAnticipo').innerHTML = html`<div class="note">${e.message}</div>`.s; }
     };
     setView(html`
-      <div class="h"><h2>Aplicación de Factura de Anticipo</h2><p>Aplica saldo individual de una factura de anticipo a una factura existente; el importe aplicado reduce el saldo pendiente en Cartera.</p></div>
-      <div class="card" style="margin-bottom:18px"><h3>Nueva aplicación</h3>
-        <div class="form">
-          <label>Cliente${clientePick.html}</label>
-          <label>Factura de Anticipo<select id="selAnticipo"><option value="">Selecciona un cliente primero…</option></select></label>
-          <label>Factura existente del despacho<select id="selFacturaDespacho"><option value="">Selecciona un cliente primero…</option></select></label>
-          <div id="resumenAnticipo" class="full"></div><div id="resumenFactura" class="full"></div>
-          <label>Importe a aplicar (MXN)<input id="montoAplicacion" type="number" min="0.01" step="0.01" required></label>
-          <label>Fecha de aplicación<input id="fechaAplicacion" type="date" value="${hoyLocal()}" max="${hoyLocal()}" required></label>
-          <label>Referencia<input id="referenciaAplicacion" maxlength="100"></label>
-          <label class="full">Observaciones<textarea id="observacionesAplicacion" rows="2" maxlength="1000"></textarea></label>
-          <div class="full note info">Solo se pueden aplicar anticipos en MXN: las facturas existentes del sistema no guardan un campo de moneda.</div>
-          <div class="full err" id="aplicacionErr"></div>
-          ${can('aplicaciones_anticipo_crear') ? html`<div class="full actions"><button class="btn accent" id="btnAplicarAnticipo" type="button">Registrar aplicación</button></div>` : ''}
-        </div>
+      <div class="h" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div><h2>Aplicación de Factura de Anticipo</h2><p>Aplica saldo individual de una factura de anticipo a una factura existente; el importe aplicado reduce el saldo pendiente en Cartera.</p></div>
+        ${can('aplicaciones_anticipo_crear') ? html`<button class="btn dark" data-act="agregarAnticipo">+ Agregar Anticipo</button>` : ''}
       </div>
       <div class="bar" id="filtrosAplicaciones">
         <label>Buscar<input data-f="q" placeholder="Cliente, anticipo o factura"></label>
@@ -363,6 +351,22 @@
       const pg = e.target.closest('[data-page]');
       if (pg && !pg.disabled) { st.page = Number(pg.dataset.page); loadHistory(); }
     };
+    CG.acts.agregarAnticipo = () => {
+    clienteOpciones = null;
+    opciones = { anticipos: [], facturas: [] };
+    modal(html`<h2>Agregar Anticipo</h2><div class="form">
+      <label>Cliente${clientePick.html}</label>
+      <label>Factura de Anticipo<select id="selAnticipo"><option value="">Selecciona un cliente primero…</option></select></label>
+      <label>Factura existente del despacho<select id="selFacturaDespacho"><option value="">Selecciona un cliente primero…</option></select></label>
+      <div id="resumenAnticipo" class="full"></div><div id="resumenFactura" class="full"></div>
+      <label>Importe a aplicar (MXN)<input id="montoAplicacion" type="number" min="0.01" step="0.01" required></label>
+      <label>Fecha de aplicación<input id="fechaAplicacion" type="date" value="${hoyLocal()}" max="${hoyLocal()}" required></label>
+      <label>Referencia<input id="referenciaAplicacion" maxlength="100"></label>
+      <label class="full">Observaciones<textarea id="observacionesAplicacion" rows="2" maxlength="1000"></textarea></label>
+      <div class="full err" id="aplicacionErr"></div>
+      <div class="full actions"><button class="btn" type="button" data-act="cerrar">Cancelar</button>
+        <button class="btn accent" id="btnAplicarAnticipo" type="button">Registrar aplicación</button></div>
+    </div>`, { wide: true });
     const clienteAplicacion = $('#selClienteAnticipo');
     const cambiarClienteAplicacion = async () => {
       $('#aplicacionErr').textContent = '';
@@ -414,11 +418,12 @@
           idempotencia: crypto.randomUUID(),
         } });
         toast(`Aplicación AP-${r.id} registrada. Nuevo saldo del anticipo: ${money(r.saldo_disponible, 2)}.`);
-        await cargarOpciones(); await loadHistory(); await CG.refreshKpis();
+        closeModal(); await loadHistory(); await CG.refreshKpis();
       } catch (er) { $('#aplicacionErr').textContent = er.message; }
       finally { btn.disabled = false; }
     });
     if (!clienteInicial) clienteAplicacion.dispatchEvent(new Event('change'));
+    };
     loadHistory();
     CG.acts.cancelarAplicacionAnticipo = async (el) => {
       const motivo = prompt('Motivo de cancelación de la aplicación:');
