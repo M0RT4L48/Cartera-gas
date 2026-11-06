@@ -455,22 +455,23 @@ async function api(req, res, url) {
       exigir(user, 'export');
       const k = query.get('k');
       await verificaCliente(user, k);
-      const desde = query.get('desde') || '';
-      const hasta = query.get('hasta') || '';
-      if (desde && !L.esFecha(desde)) throw new HttpError(400, 'La fecha inicial es inválida');
-      if (hasta && !L.esFecha(hasta)) throw new HttpError(400, 'La fecha final es inválida');
-      if (desde && hasta && desde > hasta) throw new HttpError(400, 'La fecha inicial no puede ser posterior a la fecha final');
-      const rows = await Q.estadoCuenta({ k, desde, hasta });
+      const estadoCuenta = await Q.estadoCuenta({ k, corte: await Q.corteValido() });
       const cliente = await q.get('SELECT cliente FROM dim_cliente WHERE k_cliente=?', k);
-      await L.bitacora(user, 'EXPORT', `estado_cuenta ${k} ${desde || 'inicio'}-${hasta || 'hoy'} · ${rows.length} movimiento(s)`, ip(req));
+      await L.bitacora(user, 'EXPORT', `estado_cuenta ${k} · ${estadoCuenta.rows.length} documento(s)`, ip(req));
+      if (query.get('formato') !== 'csv') return send(res, 200, { cliente: cliente.cliente, resumen: estadoCuenta.resumen, rows: estadoCuenta.rows });
       const nombre = k.replace(/[^a-zA-Z0-9_-]/g, '_') || 'cliente';
+      const resumenRows = [
+        { tipo_documento: 'Resumen', concepto: 'Cartera pendiente', saldo_pendiente: estadoCuenta.resumen.cartera_pendiente, naturaleza: 'Por Cobrar' },
+        { tipo_documento: 'Resumen', concepto: 'Despachos pendientes de facturar', saldo_pendiente: estadoCuenta.resumen.despachos_pendientes, naturaleza: 'Pendiente de Facturar' },
+        { tipo_documento: 'Resumen', concepto: 'Anticipos disponibles', saldo_pendiente: estadoCuenta.resumen.anticipos_disponibles, naturaleza: 'A Favor' },
+        { tipo_documento: 'Resumen', concepto: 'Posición neta del cliente', saldo_pendiente: estadoCuenta.resumen.posicion_neta, naturaleza: 'Cartera + despachos - anticipos' },
+      ];
       return csv(res, `estado_cuenta_${nombre}.csv`, [
-        ['fecha', 'Fecha'], ['tipo', 'Tipo de movimiento'], ['referencia', 'Referencia'], ['despacho', 'Despacho'],
-        ['factura', 'Factura'], ['grupo', 'Grupo'], ['concepto', 'Detalle'], ['cargo_cxc', 'Cargo CxC'],
-        ['abono_cxc', 'Abono CxC'], ['abono_prepago', 'Abono prepago'], ['consumo_prepago', 'Consumo prepago'],
-        ['importe_referencia', 'Importe de referencia'], ['saldo_cxc', 'Saldo CxC'], ['saldo_prepago', 'Saldo prepago'],
-        ['estado', 'Estado'], ['origen', 'Origen'], ['usuario', 'Usuario'],
-      ], rows);
+        ['fecha', 'Fecha'], ['tipo_documento', 'Tipo de Documento'], ['folio', 'Serie/Folio'], ['uuid', 'UUID'],
+        ['concepto', 'Concepto'], ['fecha_vencimiento', 'Fecha de vencimiento'], ['importe_original', 'Importe Original'],
+        ['saldo_pendiente', 'Saldo Pendiente'], ['naturaleza', 'Naturaleza'], ['estatus', 'Estatus'], ['moneda', 'Moneda'],
+        ['tipo_cambio', 'Tipo de cambio'], ['equivalente_mxn', 'Saldo equivalente MXN'],
+      ], [...resumenRows, ...estadoCuenta.rows]);
     }
     if (p === '/api/cliente') { const k = query.get('k'); await verificaCliente(user, k); return send(res, 200, await Q.clienteDetalle({ corte: await Q.corteValido(query.get('corte')), k })); }
     if (p === '/api/por-facturar') return send(res, 200, await Q.porFacturar(await params(query, user)));

@@ -303,40 +303,114 @@ server.listen(0, '127.0.0.1', async () => {
     assert.ok(Math.abs((dash.kpis.facturada - (await call('a', 'GET', '/api/dashboard?corte=2026-10-13')).data.kpis.facturada) - (a1 + a2)) < 0.01);
     for (const id of r.data.ids) await call('a', 'DELETE', '/api/pagos/' + id);
   });
-  await t('estado de cuenta: incluye movimientos y filtra fechas con saldo inicial', async () => {
+  await t('estado de cuenta: muestra solo documentos vigentes y calcula la posición neta', async () => {
     const alta = await call('a', 'POST', '/api/clientes', { cliente: `Estado Cuenta ${process.pid}`, estacion_id: 1, limite: 0, dias: 0 });
     assert.equal(alta.status, 201, JSON.stringify(alta.data));
     const k = alta.data.k_cliente;
-    const despacho = await call('a', 'POST', '/api/por-facturar', {
+    const despachoPendiente = await call('a', 'POST', '/api/por-facturar', {
       k_cliente: k, importe: 75, fecha_despacho: '2026-10-20', despacho: 'DESPACHO-ESTADO-CTA',
     });
-    assert.equal(despacho.status, 201, JSON.stringify(despacho.data));
+    assert.equal(despachoPendiente.status, 201, JSON.stringify(despachoPendiente.data));
+    const despachoConvertido = await call('a', 'POST', '/api/por-facturar', {
+      k_cliente: k, importe: 60, fecha_despacho: '2026-10-21', despacho: 'DESPACHO-YA-FACTURADO',
+    });
+    assert.equal(despachoConvertido.status, 201, JSON.stringify(despachoConvertido.data));
+    await L.q.run(`INSERT INTO fact_cxc_app
+      (fecha_despacho,despacho,importe,abono,k_cliente,estacion_id,estatus,grupo,fecha_factura,no_factura)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    '2026-10-21', 'DESPACHO-CANCELADO-ESTADO-CTA', 90, 0, k, 1, 'CANCELADO', 'PRUEBA', '2026-10-21', 'CANCELADO');
+    const facturaDespacho = await call('a', 'POST', '/api/cartera/facturas', {
+      k_cliente: k, no_factura: 'FACTURA-DESPACHO-ESTADO-CTA', fecha_factura: '2026-10-22',
+      facturar_por_facturar: true, ids: [2000000000 + despachoConvertido.data.id],
+    });
+    assert.equal(facturaDespacho.status, 201, JSON.stringify(facturaDespacho.data));
     const factura = await call('a', 'POST', '/api/cartera/facturas', {
       k_cliente: k, no_factura: 'FACTURA-ESTADO-CTA', importe: 250, fecha_factura: '2026-10-22',
     });
     assert.equal(factura.status, 201, JSON.stringify(factura.data));
+    const facturaPagada = await call('a', 'POST', '/api/cartera/facturas', {
+      k_cliente: k, no_factura: 'FACTURA-PAGADA-ESTADO-CTA', importe: 50, fecha_factura: '2026-10-22',
+    });
+    assert.equal(facturaPagada.status, 201, JSON.stringify(facturaPagada.data));
     const pago = await call('a', 'POST', '/api/pagos', {
       k_cliente: k, estacion_id: 1, no_factura: 'FACTURA-ESTADO-CTA', monto: 100, fecha: '2026-10-22', metodo: 'Efectivo',
     });
     assert.equal(pago.status, 201, JSON.stringify(pago.data));
+    const pagoCompleto = await call('a', 'POST', '/api/pagos', {
+      k_cliente: k, estacion_id: 1, no_factura: 'FACTURA-PAGADA-ESTADO-CTA', monto: 50, fecha: '2026-10-22', metodo: 'Efectivo',
+    });
+    assert.equal(pagoCompleto.status, 201, JSON.stringify(pagoCompleto.data));
+    const anticipo = await call('a', 'POST', '/api/facturas-anticipo', {
+      k_cliente: k, serie: 'ANT', folio: 'ESTADO-CTA', uuid_fiscal: '123e4567-e89b-12d3-a456-426614174000',
+      fecha_factura: '2026-10-20', importe_original: 200,
+    });
+    assert.equal(anticipo.status, 201, JSON.stringify(anticipo.data));
+    const aplicacion = await call('a', 'POST', '/api/aplicaciones-anticipo', {
+      k_cliente: k, factura_anticipo_id: anticipo.data.id, estacion_id: 1, no_factura: 'FACTURA-ESTADO-CTA',
+      fecha_aplicacion: '2026-10-23', importe_aplicado: 30, idempotencia: `estado-cta-${process.pid}-1`,
+    });
+    assert.equal(aplicacion.status, 201, JSON.stringify(aplicacion.data));
+    const anticipoAgotado = await call('a', 'POST', '/api/facturas-anticipo', {
+      k_cliente: k, folio: `ANT-AGOTADO-${process.pid}`, fecha_factura: '2026-10-20', importe_original: 25,
+    });
+    assert.equal(anticipoAgotado.status, 201, JSON.stringify(anticipoAgotado.data));
+    const aplicacionAgotada = await call('a', 'POST', '/api/aplicaciones-anticipo', {
+      k_cliente: k, factura_anticipo_id: anticipoAgotado.data.id, estacion_id: 1, no_factura: 'FACTURA-ESTADO-CTA',
+      fecha_aplicacion: '2026-10-23', importe_aplicado: 25, idempotencia: `estado-cta-${process.pid}-2`,
+    });
+    assert.equal(aplicacionAgotada.status, 201, JSON.stringify(aplicacionAgotada.data));
+    const anticipoCancelado = await call('a', 'POST', '/api/facturas-anticipo', {
+      k_cliente: k, folio: `ANT-CANCELADO-${process.pid}`, fecha_factura: '2026-10-20', importe_original: 90,
+    });
+    assert.equal(anticipoCancelado.status, 201, JSON.stringify(anticipoCancelado.data));
+    assert.equal((await call('a', 'POST', `/api/facturas-anticipo/${anticipoCancelado.data.id}/cancelar`, {
+      motivo: 'Prueba Estado de Cuenta',
+    })).status, 200);
+    const anticipoUsd = await call('a', 'POST', '/api/facturas-anticipo', {
+      k_cliente: k, folio: `ANT-USD-ESTADO-${process.pid}`, fecha_factura: '2026-10-20',
+      importe_original: 10, moneda: 'USD', tipo_cambio: 17,
+    });
+    assert.equal(anticipoUsd.status, 201, JSON.stringify(anticipoUsd.data));
 
     const ruta = '/api/cliente/estado-cuenta?k=' + enc(k);
     const completo = await call('a', 'GET', ruta);
     assert.equal(completo.status, 200);
-    for (const movimiento of ['DESPACHO-ESTADO-CTA', 'FACTURA-ESTADO-CTA', 'Pago CxC'])
-      assert.ok(completo.data.includes(movimiento), `No aparece ${movimiento} en el CSV`);
-
-    const periodo = await call('a', 'GET', ruta + '&desde=2026-10-22&hasta=2026-10-22');
-    assert.equal(periodo.status, 200);
-    assert.ok(periodo.data.includes('Saldo al inicio del período'));
-    assert.ok(periodo.data.includes('FACTURA-ESTADO-CTA') && periodo.data.includes('Pago CxC'));
-    assert.ok(!periodo.data.includes('DESPACHO-ESTADO-CTA'));
-    assert.equal((await call('a', 'GET', ruta + '&desde=2026-10-23&hasta=2026-10-22')).status, 400);
+    const documentos = completo.data.rows;
+    const facturaPendiente = documentos.find((row) => row.folio === 'FACTURA-ESTADO-CTA');
+    assert.ok(facturaPendiente, 'Debe aparecer la factura parcialmente pagada');
+    assert.equal(facturaPendiente.saldo_pendiente, 95);
+    assert.equal(facturaPendiente.naturaleza, 'Por Cobrar');
+    assert.ok(!documentos.some((row) => row.folio === 'FACTURA-PAGADA-ESTADO-CTA'), 'No debe aparecer una factura liquidada');
+    assert.ok(!documentos.some((row) => row.folio === 'DESPACHO-YA-FACTURADO'), 'El despacho facturado no debe duplicar saldo');
+    assert.ok(!documentos.some((row) => row.folio === 'DESPACHO-CANCELADO-ESTADO-CTA'), 'No debe aparecer un despacho cancelado');
+    assert.ok(documentos.some((row) => row.folio === 'FACTURA-DESPACHO-ESTADO-CTA' && row.saldo_pendiente === 60));
+    assert.ok(documentos.some((row) => row.folio === 'DESPACHO-ESTADO-CTA' && row.saldo_pendiente === 75));
+    const anticipoVisible = documentos.find((row) => row.tipo_documento === 'Factura de Anticipo');
+    assert.ok(anticipoVisible);
+    assert.equal(anticipoVisible.uuid, '123E4567-E89B-12D3-A456-426614174000');
+    assert.equal(anticipoVisible.importe_original, 200);
+    assert.equal(anticipoVisible.saldo_pendiente, 170);
+    assert.equal(anticipoVisible.naturaleza, 'A Favor');
+    const anticipoUsdVisible = documentos.find((row) => row.folio === `ANT-USD-ESTADO-${process.pid}`);
+    assert.ok(anticipoUsdVisible);
+    assert.equal(anticipoUsdVisible.equivalente_mxn, 170);
+    assert.ok(!documentos.some((row) => row.folio.includes('AGOTADO') || row.folio.includes('CANCELADO')));
+    assert.ok(!JSON.stringify(documentos).includes('Pago CxC'));
+    assert.ok(!JSON.stringify(documentos).includes('Aplicación de anticipo'));
+    assert.deepEqual(completo.data.resumen, {
+      cartera_pendiente: 155, despachos_pendientes: 75, anticipos_disponibles: 340, posicion_neta: -110,
+    });
+    const descarga = await call('a', 'GET', ruta + '&formato=csv');
+    assert.equal(descarga.status, 200);
+    assert.ok(descarga.data.includes('Posición neta del cliente'));
+    assert.ok(descarga.data.includes('Factura de Anticipo'));
+    assert.ok(!descarga.data.includes('Pago CxC') && !descarga.data.includes('Aplicación de anticipo'));
     assert.ok((await call('a', 'GET', '/api/bitacora')).data.rows.some((row) => row.accion === 'EXPORT' && row.detalle.includes(`estado_cuenta ${k}`)));
 
     await L.q.run('DELETE FROM pagos WHERE k_cliente=?', k);
+    await L.q.run('DELETE FROM aplicaciones_factura_anticipo WHERE k_cliente=?', k);
+    await L.q.run('DELETE FROM facturas_anticipo WHERE k_cliente=?', k);
     await L.q.run('DELETE FROM fact_cxc_app WHERE k_cliente=?', k);
-    await L.q.run('DELETE FROM fact_cxc_app WHERE id=?', despacho.data.id);
     await L.q.run('DELETE FROM credito WHERE k_cliente=?', k);
     await L.q.run('DELETE FROM cliente_extra WHERE k_cliente=?', k);
     await L.q.run('DELETE FROM dim_cliente WHERE k_cliente=?', k);
@@ -485,8 +559,8 @@ server.listen(0, '127.0.0.1', async () => {
       const estadoCuenta = await call('a', 'GET',
         '/api/cliente/estado-cuenta?k=' + enc(cliente.k_cliente));
       assert.equal(estadoCuenta.status, 200);
-      assert.ok(estadoCuenta.data.includes('Aplicación de anticipo'));
-      assert.ok(estadoCuenta.data.includes(factura1));
+      assert.ok(estadoCuenta.data.rows.some((row) => row.tipo_documento === 'Factura de Anticipo' && row.folio === `ANT-ANT-${sufijo}`));
+      assert.ok(!JSON.stringify(estadoCuenta.data.rows).includes('Aplicación de anticipo'));
       const busquedaAplicaciones = await call('a', 'GET', '/api/aplicaciones-anticipo?q=' + enc(factura1));
       assert.equal(busquedaAplicaciones.status, 200, JSON.stringify(busquedaAplicaciones.data));
       assert.ok(busquedaAplicaciones.data.rows.some((aplicacion) => aplicacion.id === aplicacion1));

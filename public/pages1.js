@@ -471,9 +471,7 @@
       <div class="head"><div><h2>${c.cliente}</h2><div class="pill-row"><span class="badge b-info">${corto(c.estacion)}</span>${c.no_cliente ? html`<span class="badge b-mut">No. ${c.no_cliente}</span>` : ''}${c.rfc ? html`<span class="badge b-mut">RFC ${c.rfc}</span>` : ''}${badge(c.riesgo)}</div></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="#/cartera?k=${encodeURIComponent(c.k_cliente)}">Ver facturas</a>${can('clientes') ? html`<button class="btn accent" data-act="editCliente" data-k="${c.k_cliente}" data-est="${c.estacion_id}" data-lim="${c.limite}" data-dias="${c.dias_credito}" data-rfc="${c.rfc || ''}" data-email="${c.email || ''}" data-telefono="${c.telefono || ''}" data-no="${c.no_cliente || ''}" data-nombre="${c.cliente}">Editar cliente</button>` : ''}</div></div>
       ${can('export') ? html`<form id="formEstadoCuenta" class="inline-form" style="margin-top:12px">
-        <label>Desde<input type="date" name="desde"></label>
-        <label>Hasta<input type="date" name="hasta"></label>
-        <button class="btn dark" type="submit">Descargar estado de cuenta CSV</button>
+        <button class="btn dark" type="submit">Ver estado de cuenta actual</button>
         <div class="err" id="estadoCuentaErr" role="alert" style="flex-basis:100%"></div>
       </form>` : ''}
       <div class="grid g3">
@@ -490,25 +488,48 @@
     const formEstadoCuenta = $('#formEstadoCuenta');
     if (formEstadoCuenta) formEstadoCuenta.onsubmit = async (e) => {
       e.preventDefault();
-      const datos = Object.fromEntries(new FormData(formEstadoCuenta));
-      const desde = datos.desde || '';
-      const hasta = datos.hasta || '';
       const error = $('#estadoCuentaErr');
       error.textContent = '';
-      if (desde && hasta && desde > hasta) { error.textContent = 'La fecha inicial no puede ser posterior a la fecha final.'; return; }
       const btn = formEstadoCuenta.querySelector('button[type="submit"]');
       btn.disabled = true;
       try {
-        const url = '/api/cliente/estado-cuenta?' + qs({ k: c.k_cliente, desde, hasta });
-        const response = await fetch(url);
-        if (!response.ok) {
-          const result = await response.json().catch(() => ({}));
-          throw new Error(result.error || 'No se pudo generar el estado de cuenta.');
-        }
-        const archivo = URL.createObjectURL(await response.blob());
-        const enlace = document.createElement('a');
-        enlace.href = archivo; enlace.download = 'estado_cuenta.csv'; enlace.click();
-        URL.revokeObjectURL(archivo);
+        const url = '/api/cliente/estado-cuenta?' + qs({ k: c.k_cliente });
+        const estado = await api(url);
+        modal(html`<div class="h"><h2>Estado de Cuenta actual · ${estado.cliente}</h2>
+          <p>Documentos vigentes que determinan la posición financiera del cliente. Pagos y aplicaciones se consideran en los saldos, pero no se listan como movimientos.</p></div>
+          <div class="grid g4" style="margin-bottom:16px">
+            <div class="kpi mini"><span class="l">Cartera pendiente</span><span class="v">${money(estado.resumen.cartera_pendiente, 2)}</span></div>
+            <div class="kpi mini k-amber"><span class="l">Despachos pendientes de facturar</span><span class="v">${money(estado.resumen.despachos_pendientes, 2)}</span></div>
+            <div class="kpi mini k-green"><span class="l">Anticipos disponibles (equivalente MXN)</span><span class="v">${money(estado.resumen.anticipos_disponibles, 2)}</span></div>
+            <div class="kpi mini ${estado.resumen.posicion_neta > 0 ? 'k-red' : 'k-green'}"><span class="l">Posición neta del cliente</span><span class="v">${money(estado.resumen.posicion_neta, 2)}</span></div>
+          </div>
+          <div class="tablewrap nomax"><table><thead><tr><th>Fecha</th><th>Tipo de Documento</th><th>Serie/Folio</th><th>UUID</th><th>Concepto</th><th>Vencimiento</th>
+            <th class="n">Importe Original</th><th class="n">Saldo Pendiente</th><th>Tipo de cambio</th><th class="n">Equivalente MXN</th><th>Naturaleza</th><th>Estatus</th></tr></thead><tbody>
+            ${estado.rows.length ? estado.rows.map((r) => html`<tr><td>${fdate(r.fecha)}</td><td>${r.tipo_documento}</td><td>${r.folio}</td><td>${r.uuid}</td><td>${r.concepto}</td>
+              <td>${fdate(r.fecha_vencimiento)}</td><td class="n">${money(r.importe_original, 2)} ${r.moneda}</td><td class="n strong">${money(r.saldo_pendiente, 2)} ${r.moneda}</td>
+              <td class="n">${r.moneda === 'MXN' ? '—' : money(r.tipo_cambio, 4)}</td><td class="n">${money(r.equivalente_mxn, 2)}</td><td>${r.naturaleza}</td><td>${r.estatus}</td></tr>`)
+              : html`<tr><td colspan="12" class="empty">No hay documentos pendientes que afecten la posición del cliente.</td></tr>`}
+          </tbody></table></div>
+          <div class="actions" style="margin-top:14px"><button class="btn" data-act="cerrar">Cerrar</button><button class="btn dark" id="descargarEstadoCuenta">Descargar CSV</button></div>`, { wide: true });
+        $('#descargarEstadoCuenta').onclick = async (event) => {
+          const descarga = event.currentTarget;
+          descarga.disabled = true;
+          try {
+            const response = await fetch(url + '&formato=csv');
+            if (!response.ok) {
+              const result = await response.json().catch(() => ({}));
+              throw new Error(result.error || 'No se pudo descargar el estado de cuenta.');
+            }
+            const archivo = URL.createObjectURL(await response.blob());
+            const enlace = document.createElement('a');
+            enlace.href = archivo; enlace.download = 'estado_cuenta.csv'; enlace.click();
+            URL.revokeObjectURL(archivo);
+          } catch (err) {
+            toast(err.message, 'bad');
+          } finally {
+            descarga.disabled = false;
+          }
+        };
       } catch (er) { error.textContent = er.message; }
       finally { btn.disabled = false; }
     };

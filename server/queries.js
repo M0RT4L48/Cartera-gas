@@ -52,7 +52,7 @@ function FAC(corte) {
     FROM ${FACTURAS()} f
     LEFT JOIN credito cr ON cr.k_cliente=f.k_cliente
     LEFT JOIN (SELECT k_cliente,estacion_id,no_factura,SUM(monto) pagos FROM pagos
-               WHERE anulado=0 AND conciliado=0 GROUP BY 1,2,3) p
+               WHERE anulado=0 AND conciliado=0 AND sin_aplicar=0 GROUP BY 1,2,3) p
       ON p.k_cliente=f.k_cliente AND p.estacion_id=f.estacion_id AND p.no_factura=f.no_factura
     LEFT JOIN (SELECT k_cliente,estacion_id,no_factura,SUM(importe_aplicado) aplicaciones
                FROM aplicaciones_factura_anticipo WHERE estado='APLICADA' GROUP BY 1,2,3) a
@@ -537,79 +537,43 @@ async function alertas({ corte, est, estaciones }) {
   return { corte, excedidos, sin_limite: sinLimite, vencidas_60: vencidas60, proximas: prox, sin_vencimiento: sinVenc, promesas, por_facturar_antiguo: pf };
 }
 
-async function estadoCuenta({ k, desde = '', hasta = '' }) {
+async function estadoCuenta({ k, corte }) {
   const rows = await q.all(`SELECT * FROM (
-      SELECT f.fecha_despacho fecha,
-        CASE WHEN f.estatus='POR FACTURAR' THEN 'Despacho por facturar' ELSE 'Detalle de despacho' END tipo,
-        COALESCE(f.despacho,'') referencia, f.despacho, COALESCE(f.no_factura,'') factura, COALESCE(f.grupo,'') grupo,
-        'Detalle de despacho' concepto,
-        CASE WHEN f.estatus='POR FACTURAR' THEN f.importe ELSE 0 END cargo_cxc,
-        0 abono_cxc, 0 abono_prepago, 0 consumo_prepago, f.importe importe_referencia,
-        f.estatus estado, f.origen, '' usuario, 0 orden
-      FROM v_cxc f WHERE f.k_cliente=? AND f.fecha_despacho IS NOT NULL
+      SELECT f.fecha_factura fecha, 'Factura' tipo_documento, f.no_factura folio, '' uuid,
+        'Factura con ' || f.despachos || ' despacho(s)' concepto, f.fecha_vencimiento,
+        f.importe importe_original, f.saldo saldo_pendiente, 'Por Cobrar' naturaleza,
+        CASE WHEN f.dias_vencido>0 THEN 'Vencida' ELSE 'Pendiente' END estatus, 'MXN' moneda,
+        1 tipo_cambio, f.saldo equivalente_mxn
+      FROM ${FAC(corte)} f
+      WHERE f.k_cliente=? AND f.abierta=1 AND f.saldo>${EPS}
       UNION ALL
-      SELECT COALESCE(f.fecha_factura,f.primer_despacho), 'Factura', f.no_factura, '', f.no_factura, '',
-        'Factura con ' || f.despachos || ' despacho(s)', f.importe, 0, 0, 0, f.importe,
-        'Registrada', 'Excel/App', '', 1
-      FROM ${FACTURAS()} f WHERE f.k_cliente=?
+      SELECT a.fecha_factura, 'Factura de Anticipo',
+        TRIM(COALESCE(a.serie || '-', '') || a.folio), COALESCE(a.uuid_fiscal, ''),
+        COALESCE(NULLIF(a.referencia,''), NULLIF(a.observaciones,''), 'Factura de Anticipo'),
+        NULL, a.importe_original, a.saldo_disponible, 'A Favor', a.estado, a.moneda,
+        COALESCE(a.tipo_cambio,1), a.saldo_disponible*COALESCE(a.tipo_cambio,1)
+      FROM facturas_anticipo a
+      WHERE a.k_cliente=? AND a.estado IN ('ABIERTA','PARCIALMENTE_APLICADA')
+        AND a.saldo_disponible>${EPS}
       UNION ALL
-      SELECT COALESCE(f.fecha_pago,f.fecha_factura,f.fecha_despacho), 'Abono CxC',
-        COALESCE(f.no_factura,f.despacho,''), f.despacho, COALESCE(f.no_factura,''), COALESCE(f.grupo,''),
-        CASE WHEN f.fecha_pago IS NULL THEN 'Abono; fecha de pago no informada' ELSE 'Abono registrado' END,
-        0, f.abono, 0, 0, f.abono, CASE WHEN f.origen='app' THEN 'Capturado' ELSE 'Importado' END,
-        CASE WHEN f.origen='app' THEN 'App' ELSE 'Excel' END, '', 2
-      FROM v_cxc f WHERE f.k_cliente=? AND f.abono>0
-      UNION ALL
-      SELECT p.fecha, CASE WHEN p.sin_aplicar=1 THEN 'Cobro sin aplicar' ELSE 'Pago CxC' END,
-        COALESCE(p.referencia,p.no_factura,''), '', COALESCE(p.no_factura,''), '',
-        TRIM(COALESCE(p.metodo,'') || CASE WHEN p.banco IS NOT NULL AND p.banco<>'' THEN ' · ' || p.banco ELSE '' END),
-        0, CASE WHEN p.anulado=0 AND p.conciliado=0 AND p.sin_aplicar=0 THEN p.monto ELSE 0 END,
-        0, 0, p.monto,
-        CASE WHEN p.anulado=1 THEN 'Anulado' WHEN p.conciliado=1 THEN 'Conciliado en Excel' WHEN p.sin_aplicar=1 THEN 'Pendiente de asignar' ELSE 'Aplicado' END,
-        'App', COALESCE(u.nombre,''), 3
-      FROM pagos p LEFT JOIN usuarios u ON u.id=p.usuario_id WHERE p.k_cliente=?
-      UNION ALL
-      SELECT a.fecha_aplicacion, 'Aplicación de anticipo', x.folio, '', a.no_factura, '',
-        COALESCE(a.referencia,'Aplicación de Factura de Anticipo'), 0,
-        CASE WHEN a.estado='APLICADA' THEN a.importe_aplicado ELSE 0 END,
-        0, 0, a.importe_aplicado,
-        CASE WHEN a.estado='CANCELADA' THEN 'Aplicación cancelada' ELSE 'Aplicado' END,
-        'Anticipo', COALESCE((SELECT nombre FROM usuarios WHERE usuario=a.created_by),
-          (SELECT nombre FROM usuarios WHERE CAST(id AS TEXT)=a.created_by), a.created_by, ''), 3
-      FROM aplicaciones_factura_anticipo a
-      JOIN facturas_anticipo x ON x.id=a.factura_anticipo_id
-      WHERE a.k_cliente=?
-      UNION ALL
-      SELECT d.fecha, CASE WHEN d.abono>0 THEN 'Abono prepago' ELSE 'Consumo prepago' END,
-        COALESCE(d.folio,''), COALESCE(d.folio,''), '', COALESCE(d.grupo,''), d.tipo,
-        0, 0, d.abono, d.importe, CASE WHEN d.abono>0 THEN d.abono ELSE d.importe END,
-        CASE WHEN d.origen='app' THEN 'Registrado' ELSE 'Importado' END, d.origen, COALESCE(u.nombre,''), 4
-      FROM v_debito d LEFT JOIN debito_app da ON d.origen='app' AND d.id=1000000000+da.id
-      LEFT JOIN usuarios u ON u.id=da.usuario_id WHERE d.k_cliente=?
-      UNION ALL
-      SELECT g.fecha, 'Gestión', g.tipo, '', '', '', COALESCE(g.resultado,'') || CASE WHEN g.notas IS NOT NULL AND g.notas<>'' THEN ' · ' || g.notas ELSE '' END,
-        0, 0, 0, 0, 0, COALESCE(g.estado,''), 'App', COALESCE(u.nombre,''), 5
-      FROM gestiones g LEFT JOIN usuarios u ON u.id=g.usuario_id WHERE g.k_cliente=?
-    ) movimientos
-    WHERE fecha IS NOT NULL AND (?='' OR fecha<=?)
-    ORDER BY fecha, orden, referencia`, k, k, k, k, k, k, k, hasta, hasta);
-
-  let saldoCxc = 0, saldoPrepago = 0;
-  const conSaldos = rows.map((row) => {
-    saldoCxc = Math.round((saldoCxc + Number(row.cargo_cxc || 0) - Number(row.abono_cxc || 0)) * 100) / 100;
-    saldoPrepago = Math.round((saldoPrepago + Number(row.abono_prepago || 0) - Number(row.consumo_prepago || 0)) * 100) / 100;
-    return { ...row, saldo_cxc: saldoCxc, saldo_prepago: saldoPrepago };
-  });
-  const filtradas = conSaldos.filter((row) => !desde || row.fecha >= desde);
-  if (desde) {
-    const previo = conSaldos.filter((row) => row.fecha < desde).at(-1);
-    filtradas.unshift({
-      fecha: desde, tipo: 'Saldo inicial', referencia: '', despacho: '', factura: '', grupo: '', concepto: 'Saldo al inicio del período',
-      cargo_cxc: 0, abono_cxc: 0, abono_prepago: 0, consumo_prepago: 0, importe_referencia: 0,
-      estado: '', origen: '', usuario: '', saldo_cxc: previo ? previo.saldo_cxc : 0, saldo_prepago: previo ? previo.saldo_prepago : 0,
-    });
-  }
-  return filtradas;
+      SELECT f.fecha_despacho, 'Despacho pendiente de facturar',
+        COALESCE(NULLIF(f.despacho,''), CAST(f.id AS TEXT)), '',
+        COALESCE(NULLIF(f.producto,''), NULLIF(f.grupo,''), 'Consumo pendiente de facturar'),
+        NULL, f.importe, f.importe-f.abono, 'Pendiente de Facturar', 'Pendiente de Facturar', 'MXN',
+        1, f.importe-f.abono
+      FROM v_cxc f
+      WHERE f.k_cliente=? AND f.estatus='POR FACTURAR' AND f.fecha_despacho IS NOT NULL
+        AND f.importe>0 AND f.importe-f.abono>${EPS}
+    ) documentos
+    ORDER BY fecha, tipo_documento, folio`, k, k, k);
+  const redondeaCentavos = (valor) => Math.round((Number(valor) + Number.EPSILON) * 100) / 100;
+  const resumen = {
+    cartera_pendiente: redondeaCentavos(rows.filter((r) => r.tipo_documento === 'Factura').reduce((s, r) => s + r.saldo_pendiente, 0)),
+    despachos_pendientes: redondeaCentavos(rows.filter((r) => r.tipo_documento === 'Despacho pendiente de facturar').reduce((s, r) => s + r.saldo_pendiente, 0)),
+    anticipos_disponibles: redondeaCentavos(rows.filter((r) => r.tipo_documento === 'Factura de Anticipo').reduce((s, r) => s + r.equivalente_mxn, 0)),
+  };
+  resumen.posicion_neta = redondeaCentavos(resumen.cartera_pendiente + resumen.despachos_pendientes - resumen.anticipos_disponibles);
+  return { resumen, rows };
 }
 
 module.exports = { listaClientes, corteDefault, corteValido, catalogos, dashboard, facturas, facturaDetalle, facturasAnticipo,

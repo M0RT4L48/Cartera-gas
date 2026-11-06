@@ -287,7 +287,7 @@ Al hacer clic en cualquier cliente en cualquier parte del sistema, se abre su fi
   4. *Gestiones:* Formulario para registrar una nueva llamada, visita o promesa de pago, y lista de gestiones históricas.
   5. *Pagos:* Historial de todos los pagos capturados para este cliente.
   6. *Historial:* Facturación vs cobranza mes con mes para análisis de comportamiento de pago.
-- **Estado de cuenta CSV:** desde la ficha se descarga el detalle de despachos, facturas, abonos, pagos, aplicaciones de anticipos, movimientos históricos de prepago y gestiones. El rango Desde/Hasta es opcional; al usar Desde, el archivo incluye el saldo inicial del período.
+- **Estado de cuenta actual:** desde la ficha del cliente se consulta una posición financiera con facturas pendientes, despachos pendientes de facturar y Facturas de Anticipo con saldo disponible. Los pagos y aplicaciones se consideran para calcular los saldos, pero no aparecen como renglones. El resumen presenta cartera pendiente, despachos pendientes, anticipos disponibles y posición neta en MXN; los anticipos en otra moneda se convierten con el tipo de cambio registrado. Se puede descargar el mismo estado a CSV.
 
 ---
 
