@@ -346,6 +346,15 @@
           ${S.cat.productos.length ? S.cat.productos.map((p) => html`<tr><td>${p.nombre}</td><td>${can('usuarios') ? html`<button class="btn small" data-act="editProducto" data-id="${p.id}" data-nombre="${p.nombre}">Editar</button> <button class="btn small danger" data-act="deleteProducto" data-id="${p.id}" data-nombre="${p.nombre}">Eliminar</button>` : ''}</td></tr>`) : html`<tr><td colspan="2" class="empty">No hay productos registrados.</td></tr>`}
         </tbody></table></div>
       </div>
+      ${S.user.rol === 'admin' ? html`<div class="card" style="margin-bottom:18px"><h3>Nombre de la empresa</h3>
+        <p class="mut">Se mostrará como encabezado al imprimir el estado de cuenta del cliente.</p>
+        <form id="formNombreEmpresa" class="inline-form" style="margin-bottom:12px">
+          <label style="flex:1;min-width:220px">Nombre<input name="nombre" maxlength="150" value="${S.cat.nombre_empresa || ''}" required></label>
+          <button class="btn dark" type="submit">${S.cat.nombre_empresa ? 'Guardar cambios' : '+ Agregar nombre'}</button>
+          <div class="err" id="nombreEmpresaErr" style="flex-basis:100%"></div>
+        </form>
+        ${S.cat.nombre_empresa ? html`<button class="btn small danger" data-act="deleteNombreEmpresa">Eliminar nombre de la empresa</button>` : ''}
+      </div>` : ''}
       ` : ''}
       ${soloClientes ? html`<div class="h"><h3>Clientes</h3></div>
       ${can('clientes') ? html`<form id="formCli" class="inline-form">
@@ -407,6 +416,15 @@
         await api('/api/productos', { method: 'POST', body: Object.fromEntries(new FormData(fp)) });
         toast('Producto agregado'); await CG.loadCatalogos(); CG.route(true);
       } catch (er) { $('#productoErr').textContent = er.message; }
+    };
+    const fn = $('#formNombreEmpresa');
+    if (fn) fn.onsubmit = async (e) => {
+      e.preventDefault();
+      $('#nombreEmpresaErr').textContent = '';
+      try {
+        await api('/api/catalogos/nombre-empresa', { method: 'PUT', body: Object.fromEntries(new FormData(fn)) });
+        toast('Nombre de la empresa guardado'); await CG.loadCatalogos(); CG.route(true);
+      } catch (er) { $('#nombreEmpresaErr').textContent = er.message; }
     };
     if (soloClientes) load();
   };
@@ -519,12 +537,20 @@
           }
           const contenido = $('#modalBox').cloneNode(true);
           contenido.querySelector('.actions')?.remove();
+          const nombreEmpresa = (S.cat.nombre_empresa || '').trim();
+          if (nombreEmpresa) {
+            const encabezado = ventana.document.createElement('header');
+            encabezado.className = 'company-header';
+            encabezado.textContent = nombreEmpresa;
+            contenido.prepend(encabezado);
+          }
           const documento = ventana.document;
           documento.open();
           documento.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Estado de cuenta</title>
             <style>
               @page{size:landscape;margin:12mm}
               body{font:12px Arial,sans-serif;color:#1f2937;margin:0}
+              .company-header{font-size:20px;font-weight:bold;text-align:center;padding-bottom:10px;margin-bottom:16px;border-bottom:2px solid #17324d}
               .modal-box{width:100%;padding:0;box-shadow:none}
               .h{margin-bottom:16px}
               .grid.g4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:16px}
@@ -659,6 +685,13 @@
     try {
       await api('/api/productos/' + el.dataset.id, { method: 'DELETE' });
       toast('Producto eliminado'); await CG.loadCatalogos(); CG.route(true);
+    } catch (e) { toast(e.message, 'bad'); }
+  };
+  CG.acts.deleteNombreEmpresa = async () => {
+    if (!confirm('¿Eliminar el nombre de la empresa? Dejará de aparecer como encabezado al imprimir estados de cuenta.')) return;
+    try {
+      await api('/api/catalogos/nombre-empresa', { method: 'DELETE' });
+      toast('Nombre de la empresa eliminado'); await CG.loadCatalogos(); CG.route(true);
     } catch (e) { toast(e.message, 'bad'); }
   };
 })();

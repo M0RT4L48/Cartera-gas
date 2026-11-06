@@ -535,6 +535,25 @@ async function api(req, res, url) {
   if (m === 'POST' && p === '/api/carga') return await cargaExcel(req, res, user, query);
   if (m === 'POST' && p === '/api/por-facturar/carga')   if (m === 'POST' && p === '/api/por-facturar/carga') return await cargaPorFacturar(req, res, user);
 
+  if (m === 'PUT' && p === '/api/catalogos/nombre-empresa') {
+    if (user.rol !== 'admin') throw new HttpError(403, 'Solo el administrador puede modificar el nombre de la empresa');
+    const b = await readBody(req), nombre = txt(b.nombre, 150);
+    if (!nombre) throw new HttpError(400, 'El nombre de la empresa es obligatorio');
+    const anterior = (await q.get("SELECT valor FROM meta WHERE clave='nombre_empresa'") || {}).valor || '';
+    await q.run(`INSERT INTO meta(clave,valor) VALUES ('nombre_empresa',?)
+      ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor`, nombre);
+    await L.bitacora(user, 'NOMBRE_EMPRESA_EDITA', `${anterior || '(vacío)'} -> ${nombre}`, ip(req));
+    return send(res, 200, { ok: true, nombre });
+  }
+  if (m === 'DELETE' && p === '/api/catalogos/nombre-empresa') {
+    if (user.rol !== 'admin') throw new HttpError(403, 'Solo el administrador puede eliminar el nombre de la empresa');
+    const actual = await q.get("SELECT valor FROM meta WHERE clave='nombre_empresa'");
+    if (!actual) throw new HttpError(404, 'No hay un nombre de empresa configurado');
+    await q.run("DELETE FROM meta WHERE clave='nombre_empresa'");
+    await L.bitacora(user, 'NOMBRE_EMPRESA_BAJA', actual.valor, ip(req));
+    return send(res, 200, { ok: true });
+  }
+
   if (m === 'POST' && p === '/api/bancos') {
     exigir(user, 'usuarios');
     const b = await readBody(req);

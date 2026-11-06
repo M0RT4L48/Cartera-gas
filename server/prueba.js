@@ -37,7 +37,7 @@ server.listen(0, '127.0.0.1', async () => {
   await t('contraseña débil rechazada', async () => assert.equal((await call('a', 'POST', '/api/cambiar-password', { actual: 'Inicial123', nueva: 'abc' })).status, 400));
   await t('cambio de contraseña', async () => assert.equal((await call('a', 'POST', '/api/cambiar-password', { actual: 'Inicial123', nueva: 'NuevaClave2026' })).status, 200));
 
-  let bancoId, bancoHistoricoId, metodoPagoId, metodoPagoPrueba;
+  let bancoId, bancoHistoricoId, metodoPagoId, metodoPagoPrueba, nombreEmpresaOriginal;
   await t('catálogo de bancos: valores iniciales y operaciones admin', async () => {
     const r = await call('a', 'GET', '/api/catalogos');
     bancoId = r.data.bancos.find((b) => b.nombre === 'BBVA').id;
@@ -122,6 +122,17 @@ server.listen(0, '127.0.0.1', async () => {
         });
       }
     }
+  });
+  await t('nombre de empresa: configuración de catálogo exclusiva del administrador', async () => {
+    const catalogo = await call('a', 'GET', '/api/catalogos');
+    nombreEmpresaOriginal = catalogo.data.nombre_empresa || '';
+    const alta = await call('a', 'PUT', '/api/catalogos/nombre-empresa', { nombre: 'Empresa de Prueba' });
+    assert.equal(alta.status, 200, JSON.stringify(alta.data));
+    assert.equal((await call('a', 'GET', '/api/catalogos')).data.nombre_empresa, 'Empresa de Prueba');
+    assert.equal((await call('a', 'PUT', '/api/catalogos/nombre-empresa', { nombre: '  ' })).status, 400);
+    assert.equal((await call('a', 'PUT', '/api/catalogos/nombre-empresa', { nombre: 'x'.repeat(151) })).data.nombre, 'x'.repeat(150));
+    assert.equal((await call('a', 'DELETE', '/api/catalogos/nombre-empresa')).status, 200);
+    await call('a', 'PUT', '/api/catalogos/nombre-empresa', { nombre: 'Empresa de Prueba' });
   });
   await t('clientes, detalle y lista para selectores', async () => {
     const r = await call('a', 'GET', '/api/clientes?corte=2026-10-13&filtro=excedido'); assert.equal(r.data.total, dash.kpis.excedidos);
@@ -687,6 +698,11 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal((await call('l', 'POST', '/api/debito/movimientos', { k_cliente: cliPagos.k_cliente })).status, 410);
     assert.equal((await call('l', 'POST', '/api/clientes', { cliente: 'x' })).status, 403);
     assert.equal((await call('l', 'PUT', '/api/bancos/1', { nombre: 'Banco No Autorizado' })).status, 403);
+    assert.equal((await call('l', 'PUT', '/api/catalogos/nombre-empresa', { nombre: 'Modificación No Autorizada' })).status, 403);
+    assert.equal((await call('l', 'DELETE', '/api/catalogos/nombre-empresa')).status, 403);
+    assert.equal((await call('a', 'GET', '/api/catalogos')).data.nombre_empresa, 'Empresa de Prueba');
+    if (nombreEmpresaOriginal) await call('a', 'PUT', '/api/catalogos/nombre-empresa', { nombre: nombreEmpresaOriginal });
+    else await call('a', 'DELETE', '/api/catalogos/nombre-empresa');
   });
   await t('supervisor: permisos específicos y asignación múltiple de estaciones', async () => {
     const relaciones = await L.q.all('PRAGMA foreign_key_list(usuario_estaciones)');
