@@ -196,8 +196,8 @@
           ${factura ? html`<label>Cliente<select name="k_cliente" disabled>
             ${clientes.map((c) => opt(c.k_cliente, `${c.cliente} · ${c.estacion}`, factura.k_cliente))}</select></label>` : html`<label>Cliente${clientePick.html}</label>`}
           ${factura ? html`<input type="hidden" name="k_cliente" value="${factura.k_cliente}">` : ''}
-          <label>Serie<input name="serie" maxlength="30" value="${factura ? factura.serie || '' : ''}"></label>
-          <label>Folio<input name="folio" maxlength="80" value="${factura ? factura.folio : ''}" required></label>
+          ${factura ? html`<label>Serie<input name="serie" maxlength="30" value="${factura.serie || ''}"></label>` : ''}
+          <label>${factura ? 'Folio' : 'Folio Anticipo'}<input name="folio" maxlength="80" value="${factura ? factura.folio : ''}" required></label>
           ${factura ? html`<label>UUID fiscal<input name="uuid_fiscal" maxlength="36" value="${factura.uuid_fiscal || ''}"></label>` : html`<input type="hidden" name="moneda" value="MXN"><input type="hidden" name="tipo_cambio" value="1">`}
           <label>Fecha de factura<input name="fecha_factura" type="date" max="${hoyLocal()}" value="${factura ? factura.fecha_factura : hoyLocal()}" required></label>
           <label>Importe original<input name="importe_original" type="number" min="0.01" max="1000000000" step="0.01" value="${factura ? factura.importe_original : ''}" required></label>
