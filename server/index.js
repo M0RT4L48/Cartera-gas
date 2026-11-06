@@ -87,7 +87,7 @@ function datosFacturaAnticipo(body) {
   const fecha = txt(body.fecha_factura, 10);
   const importe = redondea(L.num(body.importe_original, -1));
   const moneda = txt(body.moneda, 3).toUpperCase() || 'MXN';
-  const cambio = body.tipo_cambio == null || body.tipo_cambio === '' ? null : redondea(L.num(body.tipo_cambio, -1));
+  const cambio = body.tipo_cambio == null || body.tipo_cambio === '' ? (moneda === 'MXN' ? 1 : null) : redondea(L.num(body.tipo_cambio, -1));
   if (!folio) throw new HttpError(400, 'El folio de la Factura de Anticipo es obligatorio');
   if (uuid && !/^[0-9A-F]{8}-[0-9A-F]{4}-[1-5][0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/.test(uuid)) {
     throw new HttpError(400, 'El UUID fiscal no tiene un formato válido');

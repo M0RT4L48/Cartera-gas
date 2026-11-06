@@ -218,7 +218,7 @@ CREATE TABLE IF NOT EXISTS facturas_anticipo (
   importe_aplicado  REAL NOT NULL DEFAULT 0 CHECK (importe_aplicado >= 0 AND importe_aplicado <= importe_original),
   saldo_disponible  REAL NOT NULL CHECK (saldo_disponible >= 0 AND saldo_disponible <= importe_original),
   moneda            TEXT NOT NULL DEFAULT 'MXN',
-  tipo_cambio       REAL CHECK (tipo_cambio IS NULL OR tipo_cambio > 0),
+  tipo_cambio       REAL DEFAULT 1 CHECK (tipo_cambio IS NULL OR tipo_cambio > 0),
   referencia        TEXT,
   observaciones     TEXT,
   estado            TEXT NOT NULL DEFAULT 'ABIERTA' CHECK (estado IN ('ABIERTA','PARCIALMENTE_APLICADA','CERRADA','CANCELADA')),

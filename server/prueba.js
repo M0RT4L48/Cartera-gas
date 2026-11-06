@@ -530,11 +530,15 @@ server.listen(0, '127.0.0.1', async () => {
     try {
       const alta = await call('a', 'POST', '/api/facturas-anticipo', {
         k_cliente: cliente.k_cliente, serie: 'ANT', folio: `ANT-${sufijo}`,
-        uuid_fiscal: '8e560e88-2f55-4a56-a9b2-b448e7a13784', fecha_factura: fecha, importe_original: 50000,
+        fecha_factura: fecha, importe_original: 50000,
       });
       assert.equal(alta.status, 201, JSON.stringify(alta.data));
       anticipoId = alta.data.id;
       assert.equal(alta.data.saldo_disponible, 50000);
+      const datosSinCamposOpcionales = await L.q.get('SELECT uuid_fiscal,moneda,tipo_cambio FROM facturas_anticipo WHERE id=?', anticipoId);
+      assert.equal(datosSinCamposOpcionales.uuid_fiscal, null);
+      assert.equal(datosSinCamposOpcionales.moneda, 'MXN');
+      assert.equal(datosSinCamposOpcionales.tipo_cambio, 1);
       assert.equal((await call('a', 'POST', '/api/facturas-anticipo', {
         k_cliente: cliente.k_cliente, serie: 'ANT', folio: `ANT-${sufijo}`, fecha_factura: fecha, importe_original: 1,
       })).status, 409);
