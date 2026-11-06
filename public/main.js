@@ -6,10 +6,10 @@
   const NAV = [
     { id: 'clientes', label: 'Clientes', perm: 'ver' },
     { id: 'cartera', label: 'Cartera', perm: 'ver' },
+    { id: 'por-facturar', label: 'Despachos', perm: 'ver' },
     { id: 'facturas-anticipo', label: 'Facturas de Anticipo', perm: 'anticipos_ver' },
     { id: 'aplicaciones-anticipo', label: 'Aplicación de Anticipos', perm: 'aplicaciones_anticipo_ver' },
     { id: 'pagos', label: 'Pagos', perms: ['pagos', 'pagos_crear'] },
-    { id: 'por-facturar', label: 'Despachos', perm: 'ver' },
     { id: 'cobranza', label: 'Cobranza', perm: 'ver' },
     { id: 'catalogos', label: 'Catálogos', perm: 'ver' },
     { id: 'usuarios', label: 'Usuarios', perm: 'usuarios' },
