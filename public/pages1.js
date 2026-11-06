@@ -510,7 +510,39 @@
               <td class="n">${r.moneda === 'MXN' ? '—' : money(r.tipo_cambio, 4)}</td><td class="n">${money(r.equivalente_mxn, 2)}</td><td>${r.naturaleza}</td><td>${r.estatus}</td></tr>`)
               : html`<tr><td colspan="12" class="empty">No hay documentos pendientes que afecten la posición del cliente.</td></tr>`}
           </tbody></table></div>
-          <div class="actions" style="margin-top:14px"><button class="btn" data-act="cerrar">Cerrar</button><button class="btn dark" id="descargarEstadoCuenta">Descargar CSV</button></div>`, { wide: true });
+          <div class="actions" style="margin-top:14px"><button class="btn" data-act="cerrar">Cerrar</button><button class="btn dark" id="descargarEstadoCuenta">Descargar CSV</button><button class="btn dark" id="descargarEstadoCuentaPdf">Descargar PDF</button></div>`, { wide: true });
+        $('#descargarEstadoCuentaPdf').onclick = () => {
+          const ventana = window.open('', '_blank');
+          if (!ventana) {
+            toast('Permite las ventanas emergentes para descargar el PDF.', 'bad');
+            return;
+          }
+          const contenido = $('#modalBox').cloneNode(true);
+          contenido.querySelector('.actions')?.remove();
+          const documento = ventana.document;
+          documento.open();
+          documento.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Estado de cuenta</title>
+            <style>
+              @page{size:landscape;margin:12mm}
+              body{font:12px Arial,sans-serif;color:#1f2937;margin:0}
+              .modal-box{width:100%;padding:0;box-shadow:none}
+              .h{margin-bottom:16px}
+              .grid.g4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:16px}
+              .kpi{border:1px solid #d1d5db;border-top:4px solid #17324d;padding:10px}
+              .kpi .l{display:block;font-size:10px;font-weight:bold;text-transform:uppercase;margin-bottom:4px}
+              .kpi .v{display:block;font-size:18px;font-weight:bold}
+              .tablewrap{width:100%;overflow:visible}
+              table{width:100%;border-collapse:collapse;font-size:9px}
+              th,td{border:1px solid #d1d5db;padding:5px;text-align:left;overflow-wrap:anywhere}
+              th{background:#f3f4f6}
+              .n{text-align:right}
+              @media print{thead{display:table-header-group}tr{break-inside:avoid}}
+            </style></head><body>${contenido.outerHTML}</body></html>`);
+          documento.close();
+          documento.title = `Estado de cuenta - ${estado.cliente}`;
+          ventana.addEventListener('afterprint', () => ventana.close(), { once: true });
+          ventana.setTimeout(() => { ventana.focus(); ventana.print(); }, 250);
+        };
         $('#descargarEstadoCuenta').onclick = async (event) => {
           const descarga = event.currentTarget;
           descarga.disabled = true;
