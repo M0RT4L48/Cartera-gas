@@ -586,7 +586,6 @@ async function estadoCuenta({ k, corte }) {
   const despachos = await q.all(`SELECT id, origen, estacion_id, no_factura, fecha_despacho, despacho,
       producto, grupo, importe, abono, estatus
     FROM v_cxc WHERE k_cliente=? AND no_factura IS NOT NULL
-      AND estatus NOT IN ('POR FACTURAR','CANCELADO','CANCELADA')
     ORDER BY fecha_despacho, despacho, id`, k);
   const claveFactura = (estacionId, noFactura) => `${estacionId}\u001f${noFactura}`;
   const facturasPorClave = new Map(facturas.map((factura) => [
@@ -726,7 +725,17 @@ async function estadoCuenta({ k, corte }) {
             severidad: 'advertencia',
             mensaje: 'La aplicación apunta a una factura que ya no aparece en los movimientos facturables.',
           });
-        } else if (Math.abs(importeFactura - sumaDespachos) > EPS) {
+        } else if (factura.despachos !== dispatchesFactura.length) {
+          validacionesFactura.push({
+            codigo: 'CANTIDAD_DESPACHOS',
+            severidad: 'advertencia',
+            esperado: factura.despachos,
+            registrado: dispatchesFactura.length,
+            diferencia: factura.despachos - dispatchesFactura.length,
+            mensaje: 'La cantidad de despachos asociados no coincide con el conteo usado para agrupar la factura.',
+          });
+        }
+        if (factura && Math.abs(importeFactura - sumaDespachos) > EPS) {
           validacionesFactura.push({
             codigo: 'TOTAL_DESPACHOS',
             severidad: 'advertencia',
@@ -741,7 +750,7 @@ async function estadoCuenta({ k, corte }) {
           tipo_documento: 'Factura de Producto',
           fecha: factura ? factura.fecha_factura : aplicacionesFactura[0].fecha_aplicacion,
           folio: noFactura,
-          concepto: factura ? `Factura de ${factura.despachos} despacho(s)` : 'Factura relacionada con la aplicación',
+          concepto: 'Desglose de despachos asociados',
           fecha_vencimiento: factura ? factura.fecha_vencimiento : null,
           importe_original: importeFactura,
           importe_aplicado: montoAsignado,
@@ -763,7 +772,7 @@ async function estadoCuenta({ k, corte }) {
             concepto: despacho.producto || despacho.grupo || 'Despacho facturado',
             fecha_vencimiento: null,
             importe_original: redondea(despacho.importe),
-            importe_aplicado: null,
+            importe_aplicado: redondea(despacho.abono),
             saldo_pendiente: null,
             moneda: 'MXN',
             tipo_cambio: 1,

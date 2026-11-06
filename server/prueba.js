@@ -352,9 +352,16 @@ server.listen(0, '127.0.0.1', async () => {
     });
     assert.equal(facturaDespacho.status, 201, JSON.stringify(facturaDespacho.data));
     const factura = await call('a', 'POST', '/api/cartera/facturas', {
-      k_cliente: k, no_factura: 'FACTURA-ESTADO-CTA', importe: 250, fecha_factura: '2026-10-22',
+      k_cliente: k, no_factura: 'FACTURA-ESTADO-CTA', importe: 50, fecha_factura: '2026-10-22',
     });
     assert.equal(factura.status, 201, JSON.stringify(factura.data));
+    for (const [indice, importe] of [50, 50, 100, 0].entries()) {
+      await L.q.run(`INSERT INTO fact_cxc_app
+        (fecha_despacho,despacho,importe,abono,k_cliente,estacion_id,estatus,grupo,fecha_factura,no_factura)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      `2026-10-${String(18 + indice).padStart(2, '0')}`, `DESPACHO-ESTADO-CTA-${indice + 2}`,
+      importe, 0, k, 1, 'PAGADA', 'PRUEBA', '2026-10-22', 'FACTURA-ESTADO-CTA');
+    }
     const facturaPagada = await call('a', 'POST', '/api/cartera/facturas', {
       k_cliente: k, no_factura: 'FACTURA-PAGADA-ESTADO-CTA', importe: 50, fecha_factura: '2026-10-22',
     });
@@ -438,13 +445,37 @@ server.listen(0, '127.0.0.1', async () => {
     const facturaRelacionada = notaCredito.hijos.find((nodo) => nodo.tipo_documento === 'Factura de Producto');
     assert.equal(facturaRelacionada.folio, 'FACTURA-ESTADO-CTA');
     assert.equal(facturaRelacionada.importe_aplicado, 30);
-    assert.ok(facturaRelacionada.hijos.some((nodo) => nodo.tipo_documento === 'Despacho'));
+    assert.equal(facturaRelacionada.concepto, 'Desglose de despachos asociados');
+    assert.equal(facturaRelacionada.hijos.length, 5, 'Una factura con cinco despachos debe exponer cinco filas');
+    assert.equal(facturaRelacionada.hijos.reduce((suma, nodo) => suma + nodo.importe_original, 0), 250);
+    assert.ok(facturaRelacionada.hijos.every((nodo) => nodo.tipo_documento === 'Despacho' && nodo.fecha && nodo.estatus));
+    assert.ok(facturaRelacionada.hijos.some((nodo) => nodo.importe_original === 0), 'Debe conservar los despachos de importe cero');
     assert.ok(completo.data.jerarquia.some((nodo) => nodo.folio.includes('ANT-AGOTADO-')
       && nodo.hijos.some((hijo) => hijo.tipo_documento === 'Nota de Crédito (Aplicación)')),
     'Los anticipos agotados deben conservarse en el desglose de trazabilidad');
     assert.deepEqual(completo.data.resumen, {
       cartera_pendiente: 280, despachos_pendientes: 100, anticipos_disponibles: 340, posicion_neta: 40,
     });
+    const facturaDosDespachos = await call('a', 'POST', '/api/cartera/facturas', {
+      k_cliente: k, no_factura: 'FACTURA-ESTADO-CTA-DOS', importe: 100, fecha_factura: '2026-10-22',
+    });
+    assert.equal(facturaDosDespachos.status, 201, JSON.stringify(facturaDosDespachos.data));
+    await L.q.run(`INSERT INTO fact_cxc_app
+      (fecha_despacho,despacho,importe,abono,k_cliente,estacion_id,estatus,grupo,fecha_factura,no_factura)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    '2026-10-28', 'DESPACHO-ESTADO-CTA-DOS-2', 0, 0, k, 1, 'PAGADA', 'PRUEBA', '2026-10-22', 'FACTURA-ESTADO-CTA-DOS');
+    const aplicarFacturaDosDespachos = await call('a', 'POST', '/api/aplicaciones-anticipo', {
+      k_cliente: k, factura_anticipo_id: anticipo.data.id, estacion_id: 1, no_factura: 'FACTURA-ESTADO-CTA-DOS',
+      fecha_aplicacion: '2026-10-24', importe_aplicado: 20,
+      idempotencia: `estado-cta-${process.pid}-3`, referencia: 'NC-ESTADO-CTA-DOS',
+    });
+    assert.equal(aplicarFacturaDosDespachos.status, 201, JSON.stringify(aplicarFacturaDosDespachos.data));
+    const estadoDosDespachos = await call('a', 'GET', ruta);
+    const anticipoDosDespachos = estadoDosDespachos.data.jerarquia.find((nodo) => nodo.folio === 'ANT-ESTADO-CTA');
+    const notaDosDespachos = anticipoDosDespachos.hijos.find((nodo) => nodo.folio === 'NC-ESTADO-CTA-DOS');
+    const facturaRelacionadaDos = notaDosDespachos.hijos.find((nodo) => nodo.tipo_documento === 'Factura de Producto');
+    assert.equal(facturaRelacionadaDos.hijos.length, 2, 'Una factura con dos despachos debe exponer dos filas');
+    assert.equal(facturaRelacionadaDos.hijos.reduce((suma, nodo) => suma + nodo.importe_original, 0), 100);
     const descarga = await call('a', 'GET', ruta + '&formato=csv');
     assert.equal(descarga.status, 200);
     assert.ok(descarga.data.includes('Posición neta del cliente'));
