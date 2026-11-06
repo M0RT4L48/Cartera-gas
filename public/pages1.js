@@ -566,9 +566,9 @@
             <td>${fdate(nodo.fecha)}</td>
             <td>${expandible
               ? html`<button type="button" class="btn small" data-estado-toggle="${nodo.id}"
-                data-estado-count="${nodo.hijos.length}" data-estado-kind="${expandibleDespachos ? 'despachos' : 'nodo'}"
+                data-estado-kind="${expandibleDespachos ? 'despachos' : 'nodo'}"
                 aria-expanded="false" title="${expandibleDespachos ? `Ver ${nodo.hijos.length} despachos` : 'Expandir'}">
-                ${expandibleDespachos ? `Ver despachos (${nodo.hijos.length})` : '+'}</button>`
+                +</button>`
               : ''}</td>
             <td><span style="padding-left:${profundidad * 18}px">${nodo.tipo_documento}</span><br><span class="mut">${nodo.folio}</span></td>
             <td>${nodo.concepto}${nodo.solo_referencia ? html`<br><span class="mut">Referencia; no se suma de nuevo al saldo</span>` : ''}</td>
@@ -598,9 +598,8 @@
           const expandido = boton.getAttribute('aria-expanded') === 'true';
           boton.setAttribute('aria-expanded', String(!expandido));
           if (boton.dataset.estadoKind === 'despachos') {
-            const accion = expandido ? 'Ver' : 'Ocultar';
-            boton.textContent = `${accion} despachos (${boton.dataset.estadoCount})`;
-            boton.title = `${accion} los despachos de esta factura`;
+            boton.textContent = expandido ? '+' : '−';
+            boton.title = expandido ? 'Ver despachos de esta factura' : 'Ocultar despachos de esta factura';
           } else {
             boton.textContent = expandido ? '+' : '−';
             boton.title = expandido ? 'Expandir' : 'Contraer';
