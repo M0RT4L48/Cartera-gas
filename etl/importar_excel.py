@@ -163,7 +163,7 @@ def main():
             raise SystemExit(f'No se puede reemplazar CxC: {len(faltantes_anticipo)} factura(s) vinculada(s) a aplicaciones de anticipo no aparecerían en la nueva carga.')
 
     # ---------- Facturas (agregado) ----------
-    f = c[c.no_factura.notna()].copy()
+    f = c[c.no_factura.notna() & ~c.estatus.isin(['POR FACTURAR', 'CANCELADO', 'CANCELADA'])].copy()
     f['abierta'] = f.estatus.isin(['POR PAGAR', 'ABONADO']).astype(int)
     for col in ['fecha_factura', 'fecha_vencimiento', 'fecha_despacho']:
         f[col] = pd.to_datetime(f[col], errors='coerce')

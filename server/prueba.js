@@ -307,6 +307,20 @@ server.listen(0, '127.0.0.1', async () => {
     const alta = await call('a', 'POST', '/api/clientes', { cliente: `Estado Cuenta ${process.pid}`, estacion_id: 1, limite: 0, dias: 0 });
     assert.equal(alta.status, 201, JSON.stringify(alta.data));
     const k = alta.data.k_cliente;
+    const facturaMixta = `FACTURA-MIXTA-${process.pid}`;
+    const idCxcMixta = 900000000 + process.pid * 2;
+    await L.q.run(`INSERT INTO fact_cxc
+      (id,fecha_despacho,despacho,importe,abono,k_cliente,estacion_id,estatus,grupo,fecha_factura,no_factura)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    idCxcMixta, '2026-10-19', 'DESPACHO-FACTURADO-MIXTO', 125, 0, k, 1, 'POR PAGAR', 'PRUEBA', '2026-10-22', facturaMixta);
+    await L.q.run(`INSERT INTO fact_cxc
+      (id,fecha_despacho,despacho,importe,abono,k_cliente,estacion_id,estatus,grupo,fecha_factura,no_factura)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    idCxcMixta + 1, '2026-10-20', 'DESPACHO-PENDIENTE-MIXTO', 25, 0, k, 1, 'POR FACTURAR', 'PRUEBA', '2026-10-22', facturaMixta);
+    await L.q.run(`INSERT INTO fact_factura
+      (k_cliente,estacion_id,no_factura,fecha_factura,fecha_vencimiento,primer_despacho,ultimo_despacho,despachos,importe,abono,abierta)
+      VALUES (?,?,?,?,?,?,?,?,?,?,1)`,
+    k, 1, facturaMixta, '2026-10-22', '2026-10-22', '2026-10-19', '2026-10-20', 2, 150, 0);
     const despachoPendiente = await call('a', 'POST', '/api/por-facturar', {
       k_cliente: k, importe: 75, fecha_despacho: '2026-10-20', despacho: 'DESPACHO-ESTADO-CTA',
     });
@@ -381,6 +395,11 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal(facturaPendiente.saldo_pendiente, 95);
     assert.equal(facturaPendiente.naturaleza, 'Por Cobrar');
     assert.ok(!documentos.some((row) => row.folio === 'FACTURA-PAGADA-ESTADO-CTA'), 'No debe aparecer una factura liquidada');
+    const facturaMixtaVisible = documentos.find((row) => row.folio === facturaMixta);
+    assert.ok(facturaMixtaVisible);
+    assert.equal(facturaMixtaVisible.importe_original, 125, 'Cartera incluye solo el renglón ya facturado, no el despacho pendiente');
+    assert.equal(facturaMixtaVisible.saldo_pendiente, 125);
+    assert.ok(documentos.some((row) => row.folio === 'DESPACHO-PENDIENTE-MIXTO' && row.saldo_pendiente === 25));
     assert.ok(!documentos.some((row) => row.folio === 'DESPACHO-YA-FACTURADO'), 'El despacho facturado no debe duplicar saldo');
     assert.ok(!documentos.some((row) => row.folio === 'DESPACHO-CANCELADO-ESTADO-CTA'), 'No debe aparecer un despacho cancelado');
     assert.ok(documentos.some((row) => row.folio === 'FACTURA-DESPACHO-ESTADO-CTA' && row.saldo_pendiente === 60));
@@ -398,7 +417,7 @@ server.listen(0, '127.0.0.1', async () => {
     assert.ok(!JSON.stringify(documentos).includes('Pago CxC'));
     assert.ok(!JSON.stringify(documentos).includes('Aplicación de anticipo'));
     assert.deepEqual(completo.data.resumen, {
-      cartera_pendiente: 155, despachos_pendientes: 75, anticipos_disponibles: 340, posicion_neta: -110,
+      cartera_pendiente: 280, despachos_pendientes: 100, anticipos_disponibles: 340, posicion_neta: 40,
     });
     const descarga = await call('a', 'GET', ruta + '&formato=csv');
     assert.equal(descarga.status, 200);
@@ -411,6 +430,8 @@ server.listen(0, '127.0.0.1', async () => {
     await L.q.run('DELETE FROM aplicaciones_factura_anticipo WHERE k_cliente=?', k);
     await L.q.run('DELETE FROM facturas_anticipo WHERE k_cliente=?', k);
     await L.q.run('DELETE FROM fact_cxc_app WHERE k_cliente=?', k);
+    await L.q.run('DELETE FROM fact_factura WHERE k_cliente=? AND no_factura=?', k, facturaMixta);
+    await L.q.run('DELETE FROM fact_cxc WHERE k_cliente=? AND id IN (?,?)', k, idCxcMixta, idCxcMixta + 1);
     await L.q.run('DELETE FROM credito WHERE k_cliente=?', k);
     await L.q.run('DELETE FROM cliente_extra WHERE k_cliente=?', k);
     await L.q.run('DELETE FROM dim_cliente WHERE k_cliente=?', k);

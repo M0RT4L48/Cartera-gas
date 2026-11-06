@@ -14,23 +14,20 @@ function FACTURAS() {
       MAX(ultimo_despacho) ultimo_despacho, SUM(despachos) despachos, SUM(importe) importe,
       SUM(abono) abono, MAX(abierta) abierta, MIN(editable) editable, MIN(app_id) app_id
     FROM (
-      SELECT k_cliente, estacion_id, no_factura, fecha_factura, fecha_vencimiento, primer_despacho,
-        ultimo_despacho, despachos, importe, abono, abierta, 0 editable, NULL app_id
-      FROM fact_factura
-      UNION ALL
-      SELECT f.k_cliente, f.estacion_id, f.no_factura, MIN(f.fecha_factura), MIN(f.fecha_vencimiento),
-        MIN(f.fecha_despacho), MAX(f.fecha_despacho), COUNT(*), SUM(f.importe), SUM(f.abono),
-        MAX(CASE WHEN f.estatus IN ('POR PAGAR','ABONADO') THEN 1 ELSE 0 END), 0, NULL
-      FROM fact_cxc f WHERE f.no_factura IS NOT NULL AND f.estatus<>'POR FACTURAR'
-        AND NOT EXISTS (SELECT 1 FROM fact_factura x WHERE x.k_cliente=f.k_cliente
-          AND x.estacion_id=f.estacion_id AND x.no_factura=f.no_factura)
+      SELECT f.k_cliente, f.estacion_id, f.no_factura, MIN(f.fecha_factura) fecha_factura,
+        MIN(f.fecha_vencimiento) fecha_vencimiento, MIN(f.fecha_despacho) primer_despacho,
+        MAX(f.fecha_despacho) ultimo_despacho, COUNT(*) despachos, SUM(f.importe) importe, SUM(f.abono) abono,
+        MAX(CASE WHEN f.estatus IN ('POR PAGAR','ABONADO') THEN 1 ELSE 0 END) abierta, 0 editable, NULL app_id
+      FROM fact_cxc f WHERE f.no_factura IS NOT NULL
+        AND f.estatus NOT IN ('POR FACTURAR','CANCELADO','CANCELADA')
       GROUP BY f.k_cliente, f.estacion_id, f.no_factura
       UNION ALL
       SELECT k_cliente, estacion_id, no_factura, MIN(fecha_factura), MIN(fecha_vencimiento),
         MIN(fecha_despacho), MAX(fecha_despacho), COUNT(*), SUM(importe), SUM(abono),
         MAX(CASE WHEN estatus IN ('POR PAGAR','ABONADO') THEN 1 ELSE 0 END),
         MIN(CASE WHEN facturada_desde_pendiente=1 THEN 0 ELSE 1 END), MIN(id)
-      FROM fact_cxc_app WHERE no_factura IS NOT NULL AND estatus<>'POR FACTURAR'
+      FROM fact_cxc_app WHERE no_factura IS NOT NULL
+        AND estatus NOT IN ('POR FACTURAR','CANCELADO','CANCELADA')
       GROUP BY k_cliente, estacion_id, no_factura
     ) f GROUP BY k_cliente, estacion_id, no_factura)`;
 }
