@@ -3,6 +3,7 @@
 (() => {
   const { html, money, int, pct, fdate, fmes, corto, badge, diasCell, S, api, gp, can, toast, modal, closeModal,
     setView, loading, errorView, thSort, pager, bindFilters, opt, trendSVG, useBar, PALETA, qs, store, $, hoyLocal, clientePicker } = CG;
+  const estadoCuentaExpansiones = new Map();
 
   const kpiMini = (l, v, s, cls = '') => html`<div class="kpi mini ${cls}"><span class="l">${l}</span><span class="v">${v}</span><span class="s">${s}</span></div>`;
 
@@ -557,20 +558,24 @@
           }
         };
         aplanarEstado(estado.jerarquia);
+        const expansiones = new Set(estadoCuentaExpansiones.get(c.k_cliente) || []);
         const importeEstado = (valor, moneda) => valor == null ? '—' : `${money(valor, 2)} ${moneda || 'MXN'}`;
         const filasTabla = filasEstado.map(({ nodo, padre, profundidad }) => {
           const expandible = Boolean(nodo.hijos && nodo.hijos.length);
-          const expandibleDespachos = nodo.tipo_documento === 'Factura de Producto' || nodo.tipo_documento === 'Factura';
+          const expandido = expansiones.has(nodo.id);
           const validaciones = (nodo.validaciones || []).map((validacion) => validacion.mensaje).join(' ');
-          return html`<tr data-node-id="${nodo.id}" data-parent-id="${padre}" style="${padre ? 'display:none' : ''}">
+          return html`<tr class="estado-cuenta-nivel-${Math.min(profundidad + 1, 4)}" data-node-id="${nodo.id}"
+            data-parent-id="${padre}" style="${padre ? 'display:none' : ''}">
             <td>${fdate(nodo.fecha)}</td>
             <td>${expandible
-              ? html`<button type="button" class="btn small" data-estado-toggle="${nodo.id}"
-                data-estado-kind="${expandibleDespachos ? 'despachos' : 'nodo'}"
-                aria-expanded="false" title="${expandibleDespachos ? `Ver ${nodo.hijos.length} despachos` : 'Expandir'}">
-                +</button>`
+              ? html`<button type="button" class="estado-cuenta-toggle" data-estado-toggle="${nodo.id}"
+                aria-expanded="${expandido}"
+                aria-label="${expandido ? 'Contraer' : 'Expandir'} ${nodo.tipo_documento} ${nodo.folio}"
+                title="${expandido ? 'Contraer' : 'Expandir'}">${expandido ? '−' : '+'}</button>`
               : ''}</td>
-            <td><span style="padding-left:${profundidad * 18}px">${nodo.tipo_documento}</span><br><span class="mut">${nodo.folio}</span></td>
+            <td class="estado-cuenta-documento"><span class="estado-cuenta-tree-label"
+              style="--tree-depth:${profundidad}"><span class="estado-cuenta-tree-type">${nodo.tipo_documento}</span>
+              <span class="estado-cuenta-tree-folio">${nodo.folio}</span></span></td>
             <td>${nodo.concepto}${nodo.solo_referencia ? html`<br><span class="mut">Referencia; no se suma de nuevo al saldo</span>` : ''}</td>
             <td class="n">${importeEstado(nodo.importe_original, nodo.moneda)}</td>
             <td class="n">${importeEstado(nodo.importe_aplicado, nodo.moneda)}</td>
@@ -586,24 +591,13 @@
             <div class="kpi mini k-green"><span class="l">Anticipos</span><span class="v">${money(estado.resumen.anticipos_disponibles, 2)}</span></div>
             <div class="kpi mini ${estado.resumen.posicion_neta > 0 ? 'k-red' : 'k-green'}"><span class="l">${estado.resumen.posicion_neta > 0 ? 'Saldo a pagar' : estado.resumen.posicion_neta < 0 ? 'Saldo a favor' : 'Total'}</span><span class="v">${money(Math.abs(estado.resumen.posicion_neta), 2)}</span></div>
           </div>
-          <div class="tablewrap nomax"><table id="estadoCuentaTabla"><thead><tr><th>Fecha</th><th></th><th>Documento</th><th>Concepto</th>
+          <div class="tablewrap nomax estado-cuenta-wrap"><table id="estadoCuentaTabla" class="estado-cuenta-tabla"><thead><tr><th>Fecha</th><th aria-label="Expandir"></th><th>Documento</th><th>Concepto</th>
             <th class="n">Importe Original</th><th class="n">Importe Aplicado</th><th class="n">Saldo</th><th>Estado / Validación</th></tr></thead><tbody>
             ${filasTabla.length ? filasTabla
               : html`<tr><td colspan="8" class="empty">No hay documentos pendientes que afecten la posición del cliente.</td></tr>`}
           </tbody></table></div>
           <div class="actions" style="margin-top:14px"><button class="btn" data-act="cerrar">Cerrar</button><button class="btn dark" id="descargarEstadoCuenta">Descargar CSV</button><button class="btn dark" id="descargarEstadoCuentaPdf">Descargar PDF</button></div>`, { wide: true });
-        $('#estadoCuentaTabla').onclick = (event) => {
-          const boton = event.target.closest('[data-estado-toggle]');
-          if (!boton) return;
-          const expandido = boton.getAttribute('aria-expanded') === 'true';
-          boton.setAttribute('aria-expanded', String(!expandido));
-          if (boton.dataset.estadoKind === 'despachos') {
-            boton.textContent = expandido ? '+' : '−';
-            boton.title = expandido ? 'Ver despachos de esta factura' : 'Ocultar despachos de esta factura';
-          } else {
-            boton.textContent = expandido ? '+' : '−';
-            boton.title = expandido ? 'Expandir' : 'Contraer';
-          }
+        const actualizarVisibilidadArbol = () => {
           const filas = [...$('#estadoCuentaTabla').querySelectorAll('tbody tr[data-node-id]')];
           const porId = new Map(filas.map((fila) => [fila.dataset.nodeId, fila]));
           for (const fila of filas) {
@@ -619,6 +613,23 @@
             fila.style.display = visible ? '' : 'none';
           }
         };
+        $('#estadoCuentaTabla').onclick = (event) => {
+          const boton = event.target.closest('[data-estado-toggle]');
+          if (!boton) return;
+          const expandido = boton.getAttribute('aria-expanded') === 'true';
+          boton.setAttribute('aria-expanded', String(!expandido));
+          boton.textContent = expandido ? '+' : '−';
+          const filaActual = boton.closest('tr');
+          const documento = filaActual.querySelector('.estado-cuenta-tree-type').textContent;
+          const folio = filaActual.querySelector('.estado-cuenta-tree-folio').textContent;
+          boton.setAttribute('aria-label', `${expandido ? 'Expandir' : 'Contraer'} ${documento} ${folio}`);
+          boton.title = expandido ? 'Expandir' : 'Contraer';
+          if (expandido) expansiones.delete(boton.dataset.estadoToggle);
+          else expansiones.add(boton.dataset.estadoToggle);
+          estadoCuentaExpansiones.set(c.k_cliente, [...expansiones]);
+          actualizarVisibilidadArbol();
+        };
+        actualizarVisibilidadArbol();
         $('#descargarEstadoCuentaPdf').onclick = () => {
           const ventana = window.open('', '_blank');
           if (!ventana) {
@@ -654,6 +665,18 @@
               table{width:100%;border-collapse:collapse;font-size:9px}
               th,td{border:1px solid #d1d5db;padding:5px;text-align:left;overflow-wrap:anywhere}
               th{background:#f3f4f6}
+              .estado-cuenta-tabla{min-width:0}
+              .estado-cuenta-tabla th:nth-child(2),.estado-cuenta-tabla td:nth-child(2){width:20px;padding:3px;text-align:center}
+              .estado-cuenta-toggle{display:inline-grid;place-items:center;width:13px;height:13px;padding:0;border:1px solid #cbd3dd;border-radius:3px;background:transparent;color:#536273;font:600 9px/1 Arial,sans-serif}
+              .estado-cuenta-tree-label{position:relative;display:inline-flex;flex-direction:column;justify-content:center;min-height:0;padding-left:calc(var(--tree-depth)*14px)}
+              .estado-cuenta-tree-label:before{content:"";position:absolute;left:calc(var(--tree-depth)*14px - 8px);top:50%;width:6px;border-top:1px solid #cbd3dd}
+              .estado-cuenta-tree-label:after{content:"";position:absolute;left:calc(var(--tree-depth)*14px - 8px);top:0;height:50%;border-left:1px solid #cbd3dd}
+              .estado-cuenta-nivel-1 .estado-cuenta-tree-label:before,.estado-cuenta-nivel-1 .estado-cuenta-tree-label:after{display:none}
+              .estado-cuenta-nivel-1 .estado-cuenta-tree-type{font-weight:bold;color:#17324d}
+              .estado-cuenta-nivel-2 .estado-cuenta-tree-type{font-weight:bold;color:#35465a}
+              .estado-cuenta-nivel-3 .estado-cuenta-tree-type{font-weight:normal;color:#1f2937}
+              .estado-cuenta-nivel-4 .estado-cuenta-tree-type{font-weight:normal;color:#667085}
+              .estado-cuenta-tree-folio{color:#667085;font-size:8px}
               .n{text-align:right}
               @media print{thead{display:table-header-group}tr{break-inside:avoid}}
             </style></head><body>${contenido.outerHTML}</body></html>`);
