@@ -537,27 +537,31 @@ async function alertas({ corte, est, estaciones }) {
 
 async function estadoCuenta({ k, corte }) {
   const rows = await q.all(`SELECT * FROM (
-      SELECT f.fecha_factura fecha, 'Factura' tipo_documento, f.no_factura folio, '' uuid,
+      SELECT f.fecha_factura fecha, 'Factura' tipo_documento, f.no_factura folio,
         'Factura con ' || f.despachos || ' despacho(s)' concepto, f.fecha_vencimiento,
-        f.importe importe_original, f.saldo saldo_pendiente, 'Por Cobrar' naturaleza,
+        f.importe importe_original, f.abono+f.pagos_app+f.aplicaciones_anticipo importe_aplicado,
+        f.saldo saldo_pendiente, 'Por Cobrar' naturaleza,
         CASE WHEN f.dias_vencido>0 THEN 'Vencida' ELSE 'Pendiente' END estatus, 'MXN' moneda,
         1 tipo_cambio, f.saldo equivalente_mxn
       FROM ${FAC(corte)} f
       WHERE f.k_cliente=? AND f.abierta=1 AND f.saldo>${EPS}
       UNION ALL
       SELECT a.fecha_factura, 'Factura de Anticipo',
-        TRIM(COALESCE(a.serie || '-', '') || a.folio), COALESCE(a.uuid_fiscal, ''),
+        TRIM(COALESCE(a.serie || '-', '') || a.folio),
         COALESCE(NULLIF(a.referencia,''), NULLIF(a.observaciones,''), 'Factura de Anticipo'),
-        NULL, a.importe_original, a.saldo_disponible, 'A Favor', a.estado, a.moneda,
+        NULL, a.importe_original,
+        COALESCE((SELECT SUM(ap.importe_aplicado) FROM aplicaciones_factura_anticipo ap
+          WHERE ap.factura_anticipo_id=a.id AND ap.estado='APLICADA'),0),
+        a.saldo_disponible, 'A Favor', a.estado, a.moneda,
         COALESCE(a.tipo_cambio,1), a.saldo_disponible*COALESCE(a.tipo_cambio,1)
       FROM facturas_anticipo a
       WHERE a.k_cliente=? AND a.estado IN ('ABIERTA','PARCIALMENTE_APLICADA')
         AND a.saldo_disponible>${EPS}
       UNION ALL
       SELECT f.fecha_despacho, 'Despacho pendiente de facturar',
-        COALESCE(NULLIF(f.despacho,''), CAST(f.id AS TEXT)), '',
+        COALESCE(NULLIF(f.despacho,''), CAST(f.id AS TEXT)),
         COALESCE(NULLIF(f.producto,''), NULLIF(f.grupo,''), 'Consumo pendiente de facturar'),
-        NULL, f.importe, f.importe-f.abono, 'Pendiente de Facturar', 'Pendiente de Facturar', 'MXN',
+        NULL, f.importe, f.abono, f.importe-f.abono, 'Pendiente de Facturar', 'Pendiente de Facturar', 'MXN',
         1, f.importe-f.abono
       FROM v_cxc f
       WHERE f.k_cliente=? AND f.estatus='POR FACTURAR' AND f.fecha_despacho IS NOT NULL
@@ -565,13 +569,274 @@ async function estadoCuenta({ k, corte }) {
     ) documentos
     ORDER BY fecha, tipo_documento, folio`, k, k, k);
   const redondeaCentavos = (valor) => Math.round((Number(valor) + Number.EPSILON) * 100) / 100;
+  const anticipos = await q.all(`SELECT a.id, a.serie, a.folio, a.fecha_factura, a.importe_original,
+      a.saldo_disponible, a.moneda, a.tipo_cambio, a.estado
+    FROM facturas_anticipo a
+    WHERE a.k_cliente=? AND a.estado<>'CANCELADA'
+      AND (a.saldo_disponible>? OR EXISTS (
+        SELECT 1 FROM aplicaciones_factura_anticipo ap WHERE ap.factura_anticipo_id=a.id))
+    ORDER BY a.fecha_factura, a.id`, k, EPS);
+  const aplicaciones = await q.all(`SELECT ap.id, ap.factura_anticipo_id, ap.estacion_id, ap.no_factura,
+      ap.fecha_aplicacion, ap.importe_aplicado, ap.estado, ap.referencia
+    FROM aplicaciones_factura_anticipo ap
+    JOIN facturas_anticipo a ON a.id=ap.factura_anticipo_id
+    WHERE a.k_cliente=? AND a.estado<>'CANCELADA'
+    ORDER BY ap.fecha_aplicacion, ap.id`, k);
+  const facturas = await q.all(`SELECT * FROM ${FAC(corte)} WHERE k_cliente=?`, k);
+  const despachos = await q.all(`SELECT id, origen, estacion_id, no_factura, fecha_despacho, despacho,
+      producto, grupo, importe, abono, estatus
+    FROM v_cxc WHERE k_cliente=? AND no_factura IS NOT NULL
+      AND estatus NOT IN ('POR FACTURAR','CANCELADO','CANCELADA')
+    ORDER BY fecha_despacho, despacho, id`, k);
+  const claveFactura = (estacionId, noFactura) => `${estacionId}\u001f${noFactura}`;
+  const facturasPorClave = new Map(facturas.map((factura) => [
+    claveFactura(factura.estacion_id, factura.no_factura), factura,
+  ]));
+  const despachosPorClave = new Map();
+  for (const despacho of despachos) {
+    const clave = claveFactura(despacho.estacion_id, despacho.no_factura);
+    if (!despachosPorClave.has(clave)) despachosPorClave.set(clave, []);
+    despachosPorClave.get(clave).push(despacho);
+  }
+  const aplicacionesPorAnticipo = new Map();
+  for (const aplicacion of aplicaciones) {
+    if (!aplicacionesPorAnticipo.has(aplicacion.factura_anticipo_id)) {
+      aplicacionesPorAnticipo.set(aplicacion.factura_anticipo_id, []);
+    }
+    aplicacionesPorAnticipo.get(aplicacion.factura_anticipo_id).push(aplicacion);
+  }
+  const redondea = (valor) => redondeaCentavos(Number(valor) || 0);
+  const raiz = rows.filter((row) => row.tipo_documento !== 'Factura de Anticipo').map((row, index) => ({
+    id: `documento:${index}`,
+    tipo_documento: row.tipo_documento,
+    fecha: row.fecha,
+    folio: row.folio,
+    concepto: row.concepto,
+    fecha_vencimiento: row.fecha_vencimiento,
+    importe_original: redondea(row.importe_original),
+    importe_aplicado: redondea(row.importe_aplicado),
+    saldo_pendiente: redondea(row.saldo_pendiente),
+    moneda: row.moneda,
+    tipo_cambio: row.tipo_cambio,
+    equivalente_mxn: row.equivalente_mxn,
+    naturaleza: row.naturaleza,
+    estatus: row.estatus,
+    nivel: 1,
+    solo_referencia: false,
+    validaciones: [],
+    hijos: [],
+  }));
+  for (const anticipo of anticipos) {
+    const aplicacionesAnticipo = aplicacionesPorAnticipo.get(anticipo.id) || [];
+    const montoAplicadoCalculado = redondea(aplicacionesAnticipo
+      .filter((aplicacion) => aplicacion.estado === 'APLICADA')
+      .reduce((suma, aplicacion) => suma + aplicacion.importe_aplicado, 0));
+    const validacionesAnticipo = [];
+    const saldoCalculado = redondea(anticipo.importe_original - montoAplicadoCalculado);
+    if (Math.abs(saldoCalculado - anticipo.saldo_disponible) > EPS) {
+      validacionesAnticipo.push({
+        codigo: 'SALDO_ANTICIPO',
+        severidad: 'advertencia',
+        esperado: saldoCalculado,
+        registrado: redondea(anticipo.saldo_disponible),
+        diferencia: redondea(saldoCalculado - anticipo.saldo_disponible),
+        mensaje: 'El saldo disponible no coincide con el importe original menos las aplicaciones activas.',
+      });
+    }
+    const anticipoNode = {
+      id: `anticipo:${anticipo.id}`,
+      tipo_documento: 'Factura de Anticipo',
+      fecha: anticipo.fecha_factura,
+      folio: `${anticipo.serie ? `${anticipo.serie}-` : ''}${anticipo.folio}`,
+      concepto: 'Factura de Anticipo',
+      fecha_vencimiento: null,
+      importe_original: redondea(anticipo.importe_original),
+      importe_aplicado: montoAplicadoCalculado,
+      saldo_pendiente: redondea(anticipo.saldo_disponible),
+      moneda: anticipo.moneda,
+      tipo_cambio: Number(anticipo.tipo_cambio) || 1,
+      equivalente_mxn: redondea(anticipo.saldo_disponible * (Number(anticipo.tipo_cambio) || 1)),
+      naturaleza: 'A Favor',
+      estatus: anticipo.estado,
+      nivel: 1,
+      solo_referencia: false,
+      validaciones: validacionesAnticipo,
+      hijos: [],
+    };
+    const notas = new Map();
+    for (const aplicacion of aplicacionesAnticipo) {
+      const referencia = String(aplicacion.referencia || '').trim();
+      // La referencia capturada como Nota de Crédito permite agrupar sus aplicaciones a distintas facturas.
+      const claveNota = referencia ? `ref:${referencia.toLocaleUpperCase()}` : `app:${aplicacion.id}`;
+      if (!notas.has(claveNota)) {
+        notas.set(claveNota, {
+          referencia: referencia || `NC-${aplicacion.id}`,
+          aplicaciones: [],
+          facturas: new Map(),
+        });
+      }
+      const nota = notas.get(claveNota);
+      nota.aplicaciones.push(aplicacion);
+      const clave = claveFactura(aplicacion.estacion_id, aplicacion.no_factura);
+      if (!nota.facturas.has(clave)) nota.facturas.set(clave, []);
+      nota.facturas.get(clave).push(aplicacion);
+    }
+    for (const [indiceNota, nota] of [...notas.values()].entries()) {
+      const montoNota = redondea(nota.aplicaciones.reduce((suma, aplicacion) =>
+        suma + (aplicacion.estado === 'APLICADA' ? aplicacion.importe_aplicado : 0), 0));
+      const montoRegistradoNota = redondea(nota.aplicaciones.reduce((suma, aplicacion) =>
+        suma + aplicacion.importe_aplicado, 0));
+      const notaStatus = nota.aplicaciones.every((aplicacion) => aplicacion.estado === 'CANCELADA')
+        ? 'CANCELADA'
+        : nota.aplicaciones.some((aplicacion) => aplicacion.estado === 'CANCELADA')
+          ? 'PARCIALMENTE CANCELADA'
+          : 'APLICADA';
+      const notaNode = {
+        id: `${anticipoNode.id}:nota:${indiceNota}`,
+        tipo_documento: 'Nota de Crédito (Aplicación)',
+        fecha: nota.aplicaciones[0].fecha_aplicacion,
+        folio: nota.referencia,
+        concepto: `Aplicación de Factura de Anticipo · ${nota.aplicaciones.length} aplicación(es)`,
+        fecha_vencimiento: null,
+        importe_original: montoRegistradoNota,
+        importe_aplicado: montoNota,
+        saldo_pendiente: null,
+        moneda: anticipo.moneda,
+        tipo_cambio: anticipo.tipo_cambio,
+        equivalente_mxn: null,
+        naturaleza: 'Aplicación',
+        estatus: notaStatus,
+        nivel: 2,
+        solo_referencia: true,
+        validaciones: [],
+        hijos: [],
+      };
+      for (const [indiceFactura, [clave, aplicacionesFactura]] of [...nota.facturas.entries()].entries()) {
+        const [estacionId, noFactura] = clave.split('\u001f');
+        const factura = facturasPorClave.get(clave);
+        const montoAsignado = redondea(aplicacionesFactura.reduce((suma, aplicacion) =>
+          suma + (aplicacion.estado === 'APLICADA' ? aplicacion.importe_aplicado : 0), 0));
+        const dispatchesFactura = despachosPorClave.get(clave) || [];
+        const importeFactura = factura ? redondea(factura.importe) : null;
+        const sumaDespachos = redondea(dispatchesFactura.reduce((suma, despacho) => suma + despacho.importe, 0));
+        const validacionesFactura = [];
+        if (!factura) {
+          validacionesFactura.push({
+            codigo: 'FACTURA_NO_ENCONTRADA',
+            severidad: 'advertencia',
+            mensaje: 'La aplicación apunta a una factura que ya no aparece en los movimientos facturables.',
+          });
+        } else if (Math.abs(importeFactura - sumaDespachos) > EPS) {
+          validacionesFactura.push({
+            codigo: 'TOTAL_DESPACHOS',
+            severidad: 'advertencia',
+            esperado: importeFactura,
+            registrado: sumaDespachos,
+            diferencia: redondea(importeFactura - sumaDespachos),
+            mensaje: 'La suma de los despachos no coincide con el importe original de la factura.',
+          });
+        }
+        const facturaNode = {
+          id: `${notaNode.id}:factura:${indiceFactura}`,
+          tipo_documento: 'Factura de Producto',
+          fecha: factura ? factura.fecha_factura : aplicacionesFactura[0].fecha_aplicacion,
+          folio: noFactura,
+          concepto: factura ? `Factura de ${factura.despachos} despacho(s)` : 'Factura relacionada con la aplicación',
+          fecha_vencimiento: factura ? factura.fecha_vencimiento : null,
+          importe_original: importeFactura,
+          importe_aplicado: montoAsignado,
+          saldo_pendiente: factura ? redondea(factura.saldo) : null,
+          moneda: 'MXN',
+          tipo_cambio: 1,
+          equivalente_mxn: factura ? redondea(factura.saldo) : null,
+          naturaleza: 'Referencia de aplicación',
+          estatus: factura ? (factura.saldo <= EPS ? 'PAGADA' : 'PENDIENTE') : 'NO ENCONTRADA',
+          nivel: 3,
+          solo_referencia: true,
+          validaciones: validacionesFactura,
+          // Los despachos se muestran como composición de la factura; no hay asignación monetaria NC-despacho.
+          hijos: dispatchesFactura.map((despacho, indiceDespacho) => ({
+            id: `${facturaNodeId(notaNode.id, indiceFactura)}:despacho:${indiceDespacho}`,
+            tipo_documento: 'Despacho',
+            fecha: despacho.fecha_despacho,
+            folio: despacho.despacho || String(despacho.id),
+            concepto: despacho.producto || despacho.grupo || 'Despacho facturado',
+            fecha_vencimiento: null,
+            importe_original: redondea(despacho.importe),
+            importe_aplicado: null,
+            saldo_pendiente: null,
+            moneda: 'MXN',
+            tipo_cambio: 1,
+            equivalente_mxn: null,
+            naturaleza: 'Detalle de factura',
+            estatus: despacho.estatus,
+            nivel: 4,
+            solo_referencia: true,
+            validaciones: [],
+            hijos: [],
+          })),
+        };
+        notaNode.hijos.push(facturaNode);
+      }
+      const totalFacturasAsignadas = redondea(notaNode.hijos.reduce((suma, factura) =>
+        suma + factura.importe_aplicado, 0));
+      if (Math.abs(montoNota - totalFacturasAsignadas) > EPS) {
+        notaNode.validaciones.push({
+          codigo: 'TOTAL_NOTA_CREDITO',
+          severidad: 'advertencia',
+          esperado: montoNota,
+          registrado: totalFacturasAsignadas,
+          diferencia: redondea(montoNota - totalFacturasAsignadas),
+          mensaje: 'La suma de las asignaciones a facturas no coincide con la Nota de Crédito.',
+        });
+      }
+      anticipoNode.hijos.push(notaNode);
+    }
+    const totalNotasAplicadas = redondea(anticipoNode.hijos.reduce((suma, nota) =>
+      suma + (nota.tipo_documento === 'Nota de Crédito (Aplicación)' ? nota.importe_aplicado : 0), 0));
+    if (Math.abs(montoAplicadoCalculado - totalNotasAplicadas) > EPS) {
+      anticipoNode.validaciones.push({
+        codigo: 'TOTAL_APLICACIONES_ANTICIPO',
+        severidad: 'advertencia',
+        esperado: montoAplicadoCalculado,
+        registrado: totalNotasAplicadas,
+        diferencia: redondea(montoAplicadoCalculado - totalNotasAplicadas),
+        mensaje: 'La suma de las Notas de Crédito no coincide con el total aplicado al anticipo.',
+      });
+    }
+    anticipoNode.hijos.push({
+      id: `${anticipoNode.id}:saldo`,
+      tipo_documento: 'Saldo Disponible',
+      fecha: anticipo.fecha_factura,
+      folio: anticipoNode.folio,
+      concepto: 'Saldo restante de la Factura de Anticipo',
+      fecha_vencimiento: null,
+      importe_original: redondea(anticipo.importe_original),
+      importe_aplicado: montoAplicadoCalculado,
+      saldo_pendiente: redondea(anticipo.saldo_disponible),
+      moneda: anticipo.moneda,
+      tipo_cambio: Number(anticipo.tipo_cambio) || 1,
+      equivalente_mxn: anticipoNode.equivalente_mxn,
+      naturaleza: 'A Favor',
+      estatus: anticipo.estado,
+      nivel: 2,
+      solo_referencia: false,
+      validaciones: [],
+      hijos: [],
+    });
+    raiz.push(anticipoNode);
+  }
   const resumen = {
     cartera_pendiente: redondeaCentavos(rows.filter((r) => r.tipo_documento === 'Factura').reduce((s, r) => s + r.saldo_pendiente, 0)),
     despachos_pendientes: redondeaCentavos(rows.filter((r) => r.tipo_documento === 'Despacho pendiente de facturar').reduce((s, r) => s + r.saldo_pendiente, 0)),
     anticipos_disponibles: redondeaCentavos(rows.filter((r) => r.tipo_documento === 'Factura de Anticipo').reduce((s, r) => s + r.equivalente_mxn, 0)),
   };
   resumen.posicion_neta = redondeaCentavos(resumen.cartera_pendiente + resumen.despachos_pendientes - resumen.anticipos_disponibles);
-  return { resumen, rows };
+  return { resumen, rows, jerarquia: raiz };
+}
+
+function facturaNodeId(idNota, indiceFactura) {
+  return `${idNota}:factura:${indiceFactura}`;
 }
 
 module.exports = { listaClientes, corteDefault, corteValido, catalogos, dashboard, facturas, facturaDetalle, facturasAnticipo,

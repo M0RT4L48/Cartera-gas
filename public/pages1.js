@@ -549,22 +549,67 @@
       try {
         const url = '/api/cliente/estado-cuenta?' + qs({ k: c.k_cliente });
         const estado = await api(url);
+        const filasEstado = [];
+        const aplanarEstado = (nodos, padre = '', profundidad = 0) => {
+          for (const nodo of nodos || []) {
+            filasEstado.push({ nodo, padre, profundidad });
+            aplanarEstado(nodo.hijos, nodo.id, profundidad + 1);
+          }
+        };
+        aplanarEstado(estado.jerarquia);
+        const importeEstado = (valor, moneda) => valor == null ? '—' : `${money(valor, 2)} ${moneda || 'MXN'}`;
+        const filasTabla = filasEstado.map(({ nodo, padre, profundidad }) => {
+          const expandible = Boolean(nodo.hijos && nodo.hijos.length);
+          const validaciones = (nodo.validaciones || []).map((validacion) => validacion.mensaje).join(' ');
+          return html`<tr data-node-id="${nodo.id}" data-parent-id="${padre}" style="${padre ? 'display:none' : ''}">
+            <td>${fdate(nodo.fecha)}</td>
+            <td>${expandible
+              ? html`<button type="button" class="btn" data-estado-toggle="${nodo.id}" aria-expanded="false" title="Expandir">+</button>`
+              : ''}</td>
+            <td><span style="padding-left:${profundidad * 18}px">${nodo.tipo_documento}</span><br><span class="mut">${nodo.folio}</span></td>
+            <td>${nodo.concepto}${nodo.solo_referencia ? html`<br><span class="mut">Referencia; no se suma de nuevo al saldo</span>` : ''}</td>
+            <td class="n">${importeEstado(nodo.importe_original, nodo.moneda)}</td>
+            <td class="n">${importeEstado(nodo.importe_aplicado, nodo.moneda)}</td>
+            <td class="n ${nodo.tipo_documento === 'Saldo Disponible' ? 'strong pos' : 'strong'}">${importeEstado(nodo.saldo_pendiente, nodo.moneda)}</td>
+            <td>${nodo.estatus}${validaciones ? html`<br><span class="neg">${validaciones}</span>` : ''}</td>
+          </tr>`;
+        });
         modal(html`<div class="h"><h2>Estado de Cuenta actual · ${estado.cliente}</h2>
-          <p>Documentos vigentes que determinan la posición financiera del cliente. Pagos y aplicaciones se consideran en los saldos, pero no se listan como movimientos.</p></div>
+          <p>Las aplicaciones se muestran como Notas de Crédito. Las facturas y despachos anidados son referencias de trazabilidad y no se suman otra vez a la posición del cliente.</p></div>
           <div class="grid g4" style="margin-bottom:16px">
             <div class="kpi mini"><span class="l">Factura</span><span class="v">${money(estado.resumen.cartera_pendiente, 2)}</span></div>
             <div class="kpi mini k-amber"><span class="l">Despachos</span><span class="v">${money(estado.resumen.despachos_pendientes, 2)}</span></div>
             <div class="kpi mini k-green"><span class="l">Anticipos</span><span class="v">${money(estado.resumen.anticipos_disponibles, 2)}</span></div>
             <div class="kpi mini ${estado.resumen.posicion_neta > 0 ? 'k-red' : 'k-green'}"><span class="l">${estado.resumen.posicion_neta > 0 ? 'Saldo a pagar' : estado.resumen.posicion_neta < 0 ? 'Saldo a favor' : 'Total'}</span><span class="v">${money(Math.abs(estado.resumen.posicion_neta), 2)}</span></div>
           </div>
-          <div class="tablewrap nomax"><table><thead><tr><th>Fecha</th><th>Tipo de Documento</th><th>Serie/Folio</th><th>UUID</th><th>Concepto</th><th>Vencimiento</th>
-            <th class="n">Importe Original</th><th class="n">Saldo Pendiente</th><th>Tipo de cambio</th><th class="n">Equivalente MXN</th><th>Naturaleza</th><th>Estatus</th></tr></thead><tbody>
-            ${estado.rows.length ? estado.rows.map((r) => html`<tr><td>${fdate(r.fecha)}</td><td>${r.tipo_documento}</td><td>${r.folio}</td><td>${r.uuid}</td><td>${r.concepto}</td>
-              <td>${fdate(r.fecha_vencimiento)}</td><td class="n">${money(r.importe_original, 2)} ${r.moneda}</td><td class="n strong">${money(r.saldo_pendiente, 2)} ${r.moneda}</td>
-              <td class="n">${r.moneda === 'MXN' ? '—' : money(r.tipo_cambio, 4)}</td><td class="n">${money(r.equivalente_mxn, 2)}</td><td>${r.naturaleza}</td><td>${r.estatus}</td></tr>`)
-              : html`<tr><td colspan="12" class="empty">No hay documentos pendientes que afecten la posición del cliente.</td></tr>`}
+          <div class="tablewrap nomax"><table id="estadoCuentaTabla"><thead><tr><th>Fecha</th><th></th><th>Documento</th><th>Concepto</th>
+            <th class="n">Importe Original</th><th class="n">Importe Aplicado</th><th class="n">Saldo</th><th>Estado / Validación</th></tr></thead><tbody>
+            ${filasTabla.length ? filasTabla
+              : html`<tr><td colspan="8" class="empty">No hay documentos pendientes que afecten la posición del cliente.</td></tr>`}
           </tbody></table></div>
           <div class="actions" style="margin-top:14px"><button class="btn" data-act="cerrar">Cerrar</button><button class="btn dark" id="descargarEstadoCuenta">Descargar CSV</button><button class="btn dark" id="descargarEstadoCuentaPdf">Descargar PDF</button></div>`, { wide: true });
+        $('#estadoCuentaTabla').onclick = (event) => {
+          const boton = event.target.closest('[data-estado-toggle]');
+          if (!boton) return;
+          const expandido = boton.getAttribute('aria-expanded') === 'true';
+          boton.setAttribute('aria-expanded', String(!expandido));
+          boton.textContent = expandido ? '+' : '−';
+          boton.title = expandido ? 'Expandir' : 'Contraer';
+          const filas = [...$('#estadoCuentaTabla').querySelectorAll('tbody tr[data-node-id]')];
+          const porId = new Map(filas.map((fila) => [fila.dataset.nodeId, fila]));
+          for (const fila of filas) {
+            let ancestro = fila.dataset.parentId;
+            let visible = true;
+            while (ancestro) {
+              const filaAncestro = porId.get(ancestro);
+              if (!filaAncestro) break;
+              const control = filaAncestro.querySelector('[data-estado-toggle]');
+              if (control && control.getAttribute('aria-expanded') !== 'true') visible = false;
+              ancestro = filaAncestro.dataset.parentId;
+            }
+            fila.style.display = visible ? '' : 'none';
+          }
+        };
         $('#descargarEstadoCuentaPdf').onclick = () => {
           const ventana = window.open('', '_blank');
           if (!ventana) {
@@ -573,6 +618,9 @@
           }
           const contenido = $('#modalBox').cloneNode(true);
           contenido.querySelector('.actions')?.remove();
+          contenido.querySelectorAll('#estadoCuentaTabla tr[data-node-id]').forEach((fila) => {
+            fila.style.display = '';
+          });
           const nombreEmpresa = (S.cat.nombre_empresa || '').trim();
           if (nombreEmpresa) {
             const encabezado = ventana.document.createElement('header');

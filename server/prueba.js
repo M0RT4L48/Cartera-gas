@@ -419,7 +419,8 @@ server.listen(0, '127.0.0.1', async () => {
     assert.ok(documentos.some((row) => row.folio === 'DESPACHO-ESTADO-CTA' && row.saldo_pendiente === 75));
     const anticipoVisible = documentos.find((row) => row.tipo_documento === 'Factura de Anticipo');
     assert.ok(anticipoVisible);
-    assert.equal(anticipoVisible.uuid, '123E4567-E89B-12D3-A456-426614174000');
+    assert.ok(!Object.prototype.hasOwnProperty.call(anticipoVisible, 'uuid'));
+    assert.ok(!JSON.stringify(completo.data).includes('123E4567-E89B-12D3-A456-426614174000'));
     assert.equal(anticipoVisible.importe_original, 200);
     assert.equal(anticipoVisible.saldo_pendiente, 170);
     assert.equal(anticipoVisible.naturaleza, 'A Favor');
@@ -429,6 +430,18 @@ server.listen(0, '127.0.0.1', async () => {
     assert.ok(!documentos.some((row) => row.folio.includes('AGOTADO') || row.folio.includes('CANCELADO')));
     assert.ok(!JSON.stringify(documentos).includes('Pago CxC'));
     assert.ok(!JSON.stringify(documentos).includes('Aplicación de anticipo'));
+    const anticipoJerarquia = completo.data.jerarquia.find((nodo) => nodo.folio === 'ANT-ESTADO-CTA');
+    assert.ok(anticipoJerarquia, 'La jerarquía debe incluir el anticipo con aplicaciones activas');
+    const notaCredito = anticipoJerarquia.hijos.find((nodo) => nodo.tipo_documento === 'Nota de Crédito (Aplicación)');
+    assert.ok(notaCredito, 'La aplicación debe representarse como Nota de Crédito');
+    assert.equal(notaCredito.importe_aplicado, 30);
+    const facturaRelacionada = notaCredito.hijos.find((nodo) => nodo.tipo_documento === 'Factura de Producto');
+    assert.equal(facturaRelacionada.folio, 'FACTURA-ESTADO-CTA');
+    assert.equal(facturaRelacionada.importe_aplicado, 30);
+    assert.ok(facturaRelacionada.hijos.some((nodo) => nodo.tipo_documento === 'Despacho'));
+    assert.ok(completo.data.jerarquia.some((nodo) => nodo.folio.includes('ANT-AGOTADO-')
+      && nodo.hijos.some((hijo) => hijo.tipo_documento === 'Nota de Crédito (Aplicación)')),
+    'Los anticipos agotados deben conservarse en el desglose de trazabilidad');
     assert.deepEqual(completo.data.resumen, {
       cartera_pendiente: 280, despachos_pendientes: 100, anticipos_disponibles: 340, posicion_neta: 40,
     });
@@ -436,6 +449,8 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal(descarga.status, 200);
     assert.ok(descarga.data.includes('Posición neta del cliente'));
     assert.ok(descarga.data.includes('Factura de Anticipo'));
+    assert.ok(descarga.data.includes('Nota de Crédito (Aplicación)'));
+    assert.ok(!descarga.data.includes('UUID'));
     assert.ok(!descarga.data.includes('Pago CxC') && !descarga.data.includes('Aplicación de anticipo'));
     assert.ok((await call('a', 'GET', '/api/bitacora')).data.rows.some((row) => row.accion === 'EXPORT' && row.detalle.includes(`estado_cuenta ${k}`)));
 

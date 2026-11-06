@@ -458,7 +458,14 @@ async function api(req, res, url) {
       const estadoCuenta = await Q.estadoCuenta({ k, corte: await Q.corteValido() });
       const cliente = await q.get('SELECT cliente FROM dim_cliente WHERE k_cliente=?', k);
       await L.bitacora(user, 'EXPORT', `estado_cuenta ${k} · ${estadoCuenta.rows.length} documento(s)`, ip(req));
-      if (query.get('formato') !== 'csv') return send(res, 200, { cliente: cliente.cliente, resumen: estadoCuenta.resumen, rows: estadoCuenta.rows });
+      if (query.get('formato') !== 'csv') {
+        return send(res, 200, {
+          cliente: cliente.cliente,
+          resumen: estadoCuenta.resumen,
+          rows: estadoCuenta.rows,
+          jerarquia: estadoCuenta.jerarquia,
+        });
+      }
       const nombre = k.replace(/[^a-zA-Z0-9_-]/g, '_') || 'cliente';
       const resumenRows = [
         { tipo_documento: 'Resumen', concepto: 'Cartera pendiente', saldo_pendiente: estadoCuenta.resumen.cartera_pendiente, naturaleza: 'Por Cobrar' },
@@ -466,12 +473,39 @@ async function api(req, res, url) {
         { tipo_documento: 'Resumen', concepto: 'Anticipos disponibles', saldo_pendiente: estadoCuenta.resumen.anticipos_disponibles, naturaleza: 'A Favor' },
         { tipo_documento: 'Resumen', concepto: 'Posición neta del cliente', saldo_pendiente: estadoCuenta.resumen.posicion_neta, naturaleza: 'Cartera + despachos - anticipos' },
       ];
+      const filasJerarquia = [];
+      const aplanarJerarquia = (nodos, padre = '') => {
+        for (const nodo of nodos) {
+          filasJerarquia.push({
+            fecha: nodo.fecha,
+            tipo_documento: nodo.tipo_documento,
+            folio: nodo.folio,
+            concepto: nodo.concepto,
+            fecha_vencimiento: nodo.fecha_vencimiento,
+            importe_original: nodo.importe_original,
+            importe_aplicado: nodo.importe_aplicado,
+            saldo_pendiente: nodo.saldo_pendiente,
+            naturaleza: nodo.naturaleza,
+            estatus: nodo.estatus,
+            moneda: nodo.moneda,
+            tipo_cambio: nodo.tipo_cambio,
+            equivalente_mxn: nodo.equivalente_mxn,
+            nivel: nodo.nivel,
+            documento_padre: padre,
+            validacion: (nodo.validaciones || []).map((validacion) => validacion.mensaje).join(' | '),
+          });
+          aplanarJerarquia(nodo.hijos || [], nodo.folio);
+        }
+      };
+      aplanarJerarquia(estadoCuenta.jerarquia);
       return csv(res, `estado_cuenta_${nombre}.csv`, [
-        ['fecha', 'Fecha'], ['tipo_documento', 'Tipo de Documento'], ['folio', 'Serie/Folio'], ['uuid', 'UUID'],
+        ['fecha', 'Fecha'], ['tipo_documento', 'Tipo de Documento'], ['folio', 'Serie/Folio'],
         ['concepto', 'Concepto'], ['fecha_vencimiento', 'Fecha de vencimiento'], ['importe_original', 'Importe Original'],
         ['saldo_pendiente', 'Saldo Pendiente'], ['naturaleza', 'Naturaleza'], ['estatus', 'Estatus'], ['moneda', 'Moneda'],
         ['tipo_cambio', 'Tipo de cambio'], ['equivalente_mxn', 'Saldo equivalente MXN'],
-      ], [...resumenRows, ...estadoCuenta.rows]);
+        ['importe_aplicado', 'Importe Aplicado'],
+        ['nivel', 'Nivel'], ['documento_padre', 'Documento padre'], ['validacion', 'Validación'],
+      ], [...resumenRows, ...filasJerarquia]);
     }
     if (p === '/api/cliente') { const k = query.get('k'); await verificaCliente(user, k); return send(res, 200, await Q.clienteDetalle({ corte: await Q.corteValido(query.get('corte')), k })); }
     if (p === '/api/por-facturar') return send(res, 200, await Q.porFacturar(await params(query, user)));
