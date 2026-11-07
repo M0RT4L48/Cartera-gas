@@ -108,6 +108,45 @@ function datosFacturaAnticipo(body) {
 }
 const requiereBanco = (v) => v === true || v === 1 || v === '1' || v === 'on';
 
+async function verificarApiUsuarios() {
+  const apiUrl = process.env.API_URL;
+  const apiToken = process.env.API_TOKEN;
+  if (!apiUrl || !apiToken) throw new HttpError(503, 'La integración de usuarios no está configurada');
+
+  let endpoint;
+  try {
+    endpoint = new URL(apiUrl);
+    if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) {
+      throw new Error('URL no permitida');
+    }
+    endpoint.pathname = `${endpoint.pathname.replace(/\/+$/, '')}/usuarios`;
+    endpoint.search = '';
+    endpoint.hash = '';
+  } catch {
+    throw new HttpError(503, 'La URL de la integración de usuarios no es válida');
+  }
+
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      redirect: 'error',
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (error) {
+    console.error('[INTEGRACION_USUARIOS]', error);
+    throw new HttpError(502, 'No se pudo conectar con la API externa de usuarios');
+  }
+
+  await response.body?.cancel();
+  if (response.status !== 200) throw new HttpError(502, 'La API externa de usuarios no respondió correctamente');
+  return { ok: true, estado: 'conectado' };
+}
+
 function alcance(user, query) {
   const ids = estacionesAsignadas(user);
   if (query.get('estacion') === 'todas') return { est: null, estaciones: ids.length ? ids : null };
@@ -372,6 +411,10 @@ async function api(req, res, url) {
   // ================= LECTURA =================
   if (m === 'GET') {
     exigir(user, 'ver');
+    if (p === '/api/integracion/usuarios/health') {
+      exigir(user, 'usuarios');
+      return send(res, 200, await verificarApiUsuarios());
+    }
     if (p === '/api/catalogos') {
       const c = await Q.catalogos();
       const ids = estacionesAsignadas(user);

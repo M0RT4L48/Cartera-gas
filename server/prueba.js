@@ -1,6 +1,6 @@
 'use strict';
 // Pruebas de integracion (usa una COPIA temporal de la BD; no toca data/cartera.db)
-const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path'); const assert = require('node:assert');
+const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path'); const assert = require('node:assert'); const http = require('node:http');
 const { spawn } = require('node:child_process');
 const src = path.join(__dirname, '..', 'data', 'cartera.db');
 const tmp = path.join(os.tmpdir(), `cartera_test_${process.pid}.db`);
@@ -36,6 +36,36 @@ server.listen(0, '127.0.0.1', async () => {
   await t('cambio de contraseña obligatorio bloquea la API', async () => assert.equal((await call('a', 'GET', '/api/dashboard')).status, 403));
   await t('contraseña débil rechazada', async () => assert.equal((await call('a', 'POST', '/api/cambiar-password', { actual: 'Inicial123', nueva: 'abc' })).status, 400));
   await t('cambio de contraseña', async () => assert.equal((await call('a', 'POST', '/api/cambiar-password', { actual: 'Inicial123', nueva: 'NuevaClave2026' })).status, 200));
+  await t('integración de usuarios: requiere admin y no devuelve datos externos', async () => {
+    let status = 200, authorization;
+    const external = http.createServer((req, res) => {
+      authorization = req.headers.authorization;
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify([{ usuario: 'dato privado' }]));
+    });
+    await new Promise((resolve) => external.listen(0, '127.0.0.1', resolve));
+    const previousUrl = process.env.API_URL, previousToken = process.env.API_TOKEN;
+    process.env.API_URL = `http://127.0.0.1:${external.address().port}/api`;
+    process.env.API_TOKEN = 'token-prueba';
+    try {
+      assert.equal((await call('x', 'GET', '/api/integracion/usuarios/health')).status, 401);
+      const result = await call('a', 'GET', '/api/integracion/usuarios/health');
+      assert.equal(result.status, 200);
+      assert.deepEqual(result.data, { ok: true, estado: 'conectado' });
+      assert.equal(authorization, 'Bearer token-prueba');
+      assert.ok(!JSON.stringify(result.data).includes('dato privado'));
+      status = 401;
+      const rejected = await call('a', 'GET', '/api/integracion/usuarios/health');
+      assert.equal(rejected.status, 502);
+      assert.ok(!JSON.stringify(rejected.data).includes('dato privado'));
+    } finally {
+      if (previousUrl === undefined) delete process.env.API_URL;
+      else process.env.API_URL = previousUrl;
+      if (previousToken === undefined) delete process.env.API_TOKEN;
+      else process.env.API_TOKEN = previousToken;
+      await new Promise((resolve, reject) => external.close((error) => error ? reject(error) : resolve()));
+    }
+  });
 
   let bancoId, bancoHistoricoId, metodoPagoId, metodoPagoPrueba, nombreEmpresaOriginal;
   await t('catálogo de bancos: valores iniciales y operaciones admin', async () => {

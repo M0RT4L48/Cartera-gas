@@ -27,6 +27,8 @@ npm run migrar:turso -- --confirmar-sobrescritura
 
 Este comando reemplaza los datos que haya en Turso con todas las tablas de `DB_PATH`; respalda ambas bases antes de usarlo. Configura las mismas variables como Environment Variables en Render.
 
+La comprobación opcional de conectividad con la API externa de usuarios usa `API_URL` (URL base, sin `/usuarios`) y `API_TOKEN` como variables de entorno. En Render configura ambas con los valores de la integración; no subas `Credenciales.py` ni guardes el token en el repositorio. El endpoint `GET /api/integracion/usuarios/health` requiere una sesión de administrador y solo informa si la API devuelve HTTP 200; no expone la respuesta de usuarios. Esta integración es independiente de Turso y no sustituye sus credenciales ni permisos de lectura.
+
 ## Ejecutar con Docker
 
 Requiere Docker Desktop con Docker Compose. Desde esta carpeta, inicia la aplicación con:
