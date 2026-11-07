@@ -1,0 +1,22 @@
+{
+    "files.associations": {
+        "server/schema.sql": "plaintext"
+    },
+    "json.schemas": [
+        {
+            "fileMatch": [
+                "/.mcp.json"
+            ],
+            "url": "./.vscode/schemas/copilot-mcp.schema.json"
+        }
+    ],
+    "files.exclude": {
+        "**/.git": true,
+        "**/.svn": true,
+        "**/.hg": true,
+        "**/.jj": true,
+        "**/.DS_Store": true,
+        "**/Thumbs.db": true,
+        ".mule": true
+    }
+}

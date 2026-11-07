@@ -94,16 +94,34 @@ const likeEsc = (s) => `%${String(s).replace(/[%_\\]/g, (m) => '\\' + m)}%`;
 
 // ---------------- Catalogos ----------------
 async function catalogos() {
+  const [estaciones, bancos, metodos_pago, productos, nombre_empresa, fecha_corte, fuente, importado_en, anios] = await Promise.all([
+    q.all('SELECT id,nombre FROM dim_estacion ORDER BY nombre'),
+    q.all('SELECT id,nombre FROM bancos ORDER BY nombre'),
+    q.all('SELECT id,nombre,requiere_banco FROM metodos_pago ORDER BY nombre'),
+    q.all('SELECT id,nombre FROM productos ORDER BY nombre'),
+    q.get("SELECT valor FROM meta WHERE clave='nombre_empresa'"),
+    corteDefault(),
+    q.get("SELECT valor FROM meta WHERE clave='fuente'"),
+    q.get("SELECT valor FROM meta WHERE clave='importado_en'"),
+    q.all(`SELECT DISTINCT t.anio FROM (
+        SELECT k_cliente, estacion_id, no_factura, MIN(fecha_factura) fecha_factura
+        FROM fact_cxc WHERE no_factura IS NOT NULL
+          AND estatus NOT IN ('POR FACTURAR','CANCELADO','CANCELADA')
+        GROUP BY k_cliente, estacion_id, no_factura
+        UNION ALL
+        SELECT k_cliente, estacion_id, no_factura, MIN(fecha_factura)
+        FROM fact_cxc_app WHERE no_factura IS NOT NULL
+          AND estatus NOT IN ('POR FACTURAR','CANCELADO','CANCELADA')
+        GROUP BY k_cliente, estacion_id, no_factura
+      ) f JOIN dim_tiempo t ON t.fecha=f.fecha_factura ORDER BY 1 DESC`),
+  ]);
   return {
-    estaciones: await q.all('SELECT id,nombre FROM dim_estacion ORDER BY nombre'),
-    bancos: await q.all('SELECT id,nombre FROM bancos ORDER BY nombre'),
-    metodos_pago: await q.all('SELECT id,nombre,requiere_banco FROM metodos_pago ORDER BY nombre'),
-    productos: await q.all('SELECT id,nombre FROM productos ORDER BY nombre'),
-    nombre_empresa: (await q.get("SELECT valor FROM meta WHERE clave='nombre_empresa'") || {}).valor || '',
-    fecha_corte: await corteDefault(),
-    fuente: (await q.get("SELECT valor FROM meta WHERE clave='fuente'") || {}).valor || null,
-    importado_en: (await q.get("SELECT valor FROM meta WHERE clave='importado_en'") || {}).valor || null,
-    anios: (await q.all(`SELECT DISTINCT t.anio FROM ${FACTURAS()} f JOIN dim_tiempo t ON t.fecha=f.fecha_factura ORDER BY 1 DESC`)).map((r) => r.anio),
+    estaciones, bancos, metodos_pago, productos,
+    nombre_empresa: nombre_empresa?.valor || '',
+    fecha_corte,
+    fuente: fuente?.valor || null,
+    importado_en: importado_en?.valor || null,
+    anios: anios.map((r) => r.anio),
     meses: ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'],
     rangos: RANGOS,
   };
@@ -142,12 +160,21 @@ async function dashboard({ corte, est, estaciones }) {
   const ew = estacionesSql('f.estacion_id');
   const ep = estacionesId || [];
 
-  const k = await q.get(`SELECT COALESCE(SUM(saldo),0) facturada,
-      COALESCE(SUM(CASE WHEN dias_vencido>0 THEN saldo END),0) vencida,
-      COALESCE(SUM(CASE WHEN dias_vencido<=0 THEN saldo END),0) por_vencer,
-      COALESCE(SUM(CASE WHEN dias_vencido>60 THEN saldo END),0) mayor_60,
-      SUM(CASE WHEN saldo>${EPS} THEN 1 ELSE 0 END) facturas, COUNT(DISTINCT CASE WHEN saldo>${EPS} THEN k_cliente END) clientes
-    FROM ${F} f WHERE f.abierta=1${ew}`, ...ep);
+  const core = await q.all(`WITH hechos AS MATERIALIZED ${F},
+    indicadores AS (SELECT COALESCE(SUM(saldo),0) facturada,
+        COALESCE(SUM(CASE WHEN dias_vencido>0 THEN saldo END),0) vencida,
+        COALESCE(SUM(CASE WHEN dias_vencido<=0 THEN saldo END),0) por_vencer,
+        COALESCE(SUM(CASE WHEN dias_vencido>60 THEN saldo END),0) mayor_60,
+        SUM(CASE WHEN saldo>${EPS} THEN 1 ELSE 0 END) facturas,
+        COUNT(DISTINCT CASE WHEN saldo>${EPS} THEN k_cliente END) clientes
+      FROM hechos f WHERE f.abierta=1${ew}),
+    antiguedad AS (SELECT ${RANGO_SQL()} rango, COALESCE(SUM(saldo),0) monto, COUNT(*) facturas
+      FROM hechos f WHERE f.abierta=1 AND f.saldo>${EPS}${ew} GROUP BY 1)
+    SELECT 'kpi' tipo, facturada, vencida, por_vencer, mayor_60, facturas, clientes,
+      NULL rango, NULL monto, NULL aging_facturas FROM indicadores
+    UNION ALL
+    SELECT 'aging', NULL, NULL, NULL, NULL, NULL, NULL, rango, monto, facturas FROM antiguedad`, ...ep, ...ep);
+  const k = core.find((row) => row.tipo === 'kpi');
   const pf = await q.get(`SELECT COALESCE(SUM(importe-abono),0) monto, COUNT(*) n FROM v_cxc f WHERE estatus='POR FACTURAR'${ew}`, ...ep);
   const fav = await q.get(`SELECT COALESCE(SUM(a.saldo_disponible),0) a_favor,
       COUNT(DISTINCT a.k_cliente) n FROM facturas_anticipo a
@@ -159,8 +186,8 @@ async function dashboard({ corte, est, estaciones }) {
       SUM(CASE WHEN x.limite=0 AND x.saldo_total>${EPS} THEN 1 ELSE 0 END) sin_limite
     FROM ${CLIENTES(corte)} x${estacionesSql('x.estacion_id', 'WHERE')}`, ...ep);
 
-  const aging = await q.all(`SELECT ${RANGO_SQL()} rango, COALESCE(SUM(saldo),0) monto, COUNT(*) facturas
-    FROM ${F} f WHERE f.abierta=1 AND f.saldo>${EPS}${ew} GROUP BY 1`, ...ep);
+  const aging = core.filter((row) => row.tipo === 'aging')
+    .map(({ tipo, aging_facturas, ...row }) => ({ ...row, facturas: aging_facturas }));
   const am = Object.fromEntries(aging.map((a) => [a.rango, a]));
   const agingOut = RANGOS.map((r) => ({ rango: r, monto: (am[r] || {}).monto || 0, facturas: (am[r] || {}).facturas || 0 }));
 
@@ -240,18 +267,28 @@ async function facturas(p) {
   const joinT = p.anio || p.mes ? `JOIN dim_tiempo t ON t.fecha=f.${col}` : '';
   if (p.anio) { wh.push('t.anio=?'); pr.push(entero(p.anio, 0, 2000, 2100)); }
   if (p.mes) { wh.push('t.mes=?'); pr.push(entero(p.mes, 0, 1, 12)); }
-  const from = `FROM ${FAC(p.corte)} f JOIN dim_cliente c ON c.k_cliente=f.k_cliente JOIN dim_estacion e ON e.id=f.estacion_id ${joinT}
-    ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''}`;
-  const orden = (ORDEN_FAC[p.sort] || 'f.saldo') + (p.dir === 'asc' ? ' ASC' : ' DESC') + ', f.no_factura';
+  const orden = (ORDEN_FAC[p.sort] || 'f.saldo').replace('c.cliente', 'f.cliente') +
+    (p.dir === 'asc' ? ' ASC' : ' DESC') + ', f.no_factura';
   const size = p.todo ? 50000 : entero(p.size, 50, 10, 200);
   const page = entero(p.page, 1, 1, 100000);
-  const tot = await q.get(`SELECT COUNT(*) n, COALESCE(SUM(f.saldo),0) saldo, COALESCE(SUM(f.importe),0) importe ${from}`, ...pr);
-  const rows = await q.all(`SELECT f.k_cliente, f.estacion_id, e.nombre estacion, c.cliente, f.no_factura, f.fecha_factura, f.fecha_vencimiento,
-      f.ultimo_despacho, f.despachos, f.importe, f.abono, f.pagos_app, f.aplicaciones_anticipo, f.saldo, f.dias_vencido,
-      ${ESTADO_SQL} estado, CASE WHEN f.saldo>${EPS} THEN ${RANGO_SQL()} ELSE NULL END rango,
-      ${PUEDE_ANULAR_DESPACHOS()} puede_anular_despachos
-    ${from} ORDER BY ${orden} LIMIT ? OFFSET ?`, ...pr, size, (page - 1) * size);
-  return { total: tot.n, suma_saldo: tot.saldo, suma_importe: tot.importe, page, size, rows };
+  const rows = await q.all(`WITH hechos AS MATERIALIZED ${FAC(p.corte)},
+    filtrados AS MATERIALIZED (SELECT f.*, e.nombre estacion, c.cliente
+      FROM hechos f JOIN dim_cliente c ON c.k_cliente=f.k_cliente
+      JOIN dim_estacion e ON e.id=f.estacion_id ${joinT}
+      ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''}),
+    totales AS (SELECT COUNT(*) n, COALESCE(SUM(saldo),0) saldo, COALESCE(SUM(importe),0) importe FROM filtrados),
+    pagina AS (SELECT f.k_cliente, f.estacion_id, f.estacion, f.cliente, f.no_factura, f.fecha_factura, f.fecha_vencimiento,
+        f.ultimo_despacho, f.despachos, f.importe, f.abono, f.pagos_app, f.aplicaciones_anticipo, f.saldo, f.dias_vencido,
+        ${ESTADO_SQL} estado, CASE WHEN f.saldo>${EPS} THEN ${RANGO_SQL()} ELSE NULL END rango,
+        ${PUEDE_ANULAR_DESPACHOS()} puede_anular_despachos
+      FROM filtrados f ORDER BY ${orden} LIMIT ? OFFSET ?)
+    SELECT pagina.*, totales.n total, totales.saldo suma_saldo, totales.importe suma_importe
+    FROM totales LEFT JOIN pagina ON 1=1`, ...pr, size, (page - 1) * size);
+  const summary = rows[0];
+  return {
+    total: summary.total, suma_saldo: summary.suma_saldo, suma_importe: summary.suma_importe, page, size,
+    rows: rows.filter((row) => row.k_cliente !== null).map(({ total, suma_saldo, suma_importe, ...row }) => row),
+  };
 }
 async function facturaDetalle({ corte, k, est, no }) {
   const f = await q.get(`SELECT f.*, c.cliente, e.nombre estacion, ${ESTADO_SQL} estado, ${RANGO_SQL()} rango
@@ -376,14 +413,22 @@ async function clientes(p) {
   else if (p.filtro === 'excedido') wh.push(`x.limite>0 AND x.saldo_total>x.limite`);
   else if (p.filtro === 'sinlimite') wh.push(`x.limite=0 AND x.saldo_total>${EPS}`);
   else if (p.filtro === 'favor') wh.push(`x.saldo_anticipo>${EPS}`);
-  const from = `FROM ${CLIENTES(p.corte)} x ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''}`;
   const orden = (ORDEN_CLI[p.sort] || 'x.saldo_total') + (p.dir === 'asc' ? ' ASC' : ' DESC') + ', x.cliente';
   const size = p.todo ? 50000 : entero(p.size, 50, 10, 200);
   const page = entero(p.page, 1, 1, 100000);
-  const tot = await q.get(`SELECT COUNT(*) n, COALESCE(SUM(x.saldo_total),0) saldo, COALESCE(SUM(x.vencido),0) vencido ${from}`, ...pr);
-  const rows = await q.all(`SELECT x.*, x.saldo_anticipo+x.limite-x.saldo_total disponible, CASE WHEN x.limite>0 THEN x.saldo_total/x.limite END uso, ${RIESGO('x')} riesgo
-    ${from} ORDER BY ${orden} LIMIT ? OFFSET ?`, ...pr, size, (page - 1) * size);
-  return { total: tot.n, suma_saldo: tot.saldo, suma_vencido: tot.vencido, page, size, rows };
+  const rows = await q.all(`WITH x AS MATERIALIZED ${CLIENTES(p.corte)},
+    filtrados AS MATERIALIZED (SELECT x.* FROM x ${wh.length ? 'WHERE ' + wh.join(' AND ') : ''}),
+    totales AS (SELECT COUNT(*) n, COALESCE(SUM(saldo_total),0) saldo, COALESCE(SUM(vencido),0) vencido FROM filtrados),
+    pagina AS (SELECT x.*, x.saldo_anticipo+x.limite-x.saldo_total disponible,
+        CASE WHEN x.limite>0 THEN x.saldo_total/x.limite END uso, ${RIESGO('x')} riesgo
+      FROM filtrados x ORDER BY ${orden} LIMIT ? OFFSET ?)
+    SELECT pagina.*, totales.n total, totales.saldo suma_saldo, totales.vencido suma_vencido
+    FROM totales LEFT JOIN pagina ON 1=1`, ...pr, size, (page - 1) * size);
+  const summary = rows[0];
+  return {
+    total: summary.total, suma_saldo: summary.suma_saldo, suma_vencido: summary.suma_vencido, page, size,
+    rows: rows.filter((row) => row.k_cliente !== null).map(({ total, suma_saldo, suma_vencido, ...row }) => row),
+  };
 }
 async function clienteDetalle({ corte, k }) {
   const c = await q.get(`SELECT x.*, x.saldo_anticipo+x.limite-x.saldo_total disponible, CASE WHEN x.limite>0 THEN x.saldo_total/x.limite END uso,
@@ -513,10 +558,18 @@ async function alertas({ corte, est, estaciones }) {
   const ew = estacionesSql('f.estacion_id');
   const ep = estacionesId || [];
   const cw = estacionesSql('x.estacion_id');
-  const excedidos = await q.all(`SELECT k_cliente, cliente, estacion, limite, saldo_total, saldo_total-limite exceso, vencido
-    FROM ${CLIENTES(corte)} x WHERE x.limite>0 AND x.saldo_total>x.limite${cw} ORDER BY exceso DESC LIMIT 100`, ...ep);
-  const sinLimite = await q.all(`SELECT k_cliente, cliente, estacion, saldo_total, vencido FROM ${CLIENTES(corte)} x
-    WHERE x.limite=0 AND x.saldo_total>${EPS}${cw} ORDER BY saldo_total DESC LIMIT 100`, ...ep);
+  const alertasClientes = await q.all(`WITH x AS MATERIALIZED ${CLIENTES(corte)}
+    SELECT 'excedidos' tipo, k_cliente, cliente, estacion, limite, saldo_total,
+      saldo_total-limite exceso, NULL saldo_orden, vencido
+    FROM (SELECT * FROM x WHERE limite>0 AND saldo_total>limite${cw} ORDER BY saldo_total-limite DESC LIMIT 100)
+    UNION ALL
+    SELECT 'sin_limite', k_cliente, cliente, estacion, NULL, saldo_total,
+      NULL, saldo_total, vencido
+    FROM (SELECT * FROM x WHERE limite=0 AND saldo_total>${EPS}${cw} ORDER BY saldo_total DESC LIMIT 100)`);
+  const excedidos = alertasClientes.filter((x) => x.tipo === 'excedidos')
+    .map(({ tipo, saldo_orden, ...alerta }) => alerta);
+  const sinLimite = alertasClientes.filter((x) => x.tipo === 'sin_limite')
+    .map(({ tipo, limite, exceso, saldo_orden, ...alerta }) => alerta);
   const base = `FROM ${F} f JOIN dim_cliente c ON c.k_cliente=f.k_cliente JOIN dim_estacion e ON e.id=f.estacion_id`;
   const cols = `f.k_cliente, c.cliente, e.nombre estacion, f.estacion_id, f.no_factura, f.fecha_vencimiento, f.saldo, f.dias_vencido`;
   const vencidas60 = await q.all(`SELECT ${cols} ${base} WHERE f.abierta=1 AND f.saldo>${EPS} AND f.dias_vencido>60${ew} ORDER BY f.saldo DESC LIMIT 100`, ...ep);

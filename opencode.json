@@ -1,0 +1,9 @@
+{
+  "mcp": {
+    "engram": {
+      "type": "local",
+      "command": ["C:\\Users\\moyoc\\AppData\\Local\\Engram\\bin\\engram-alpha.exe", "mcp", "--db", "C:\\Users\\moyoc\\.gemini\\antigravity\\scratch\\Gas_App_Financiero\\cartera-gas\\.engram/graph.tepin"],
+      "enabled": true
+    }
+  }
+}

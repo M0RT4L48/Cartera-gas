@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "engram": {
+      "type": "stdio",
+      "command": "C:\\Users\\JOSEM\\AppData\\Local\\Engram\\bin\\engram-alpha.exe",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}

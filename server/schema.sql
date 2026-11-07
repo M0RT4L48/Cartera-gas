@@ -53,9 +53,10 @@ CREATE TABLE IF NOT EXISTS fact_cxc (          -- una fila por despacho
   prev_no_factura TEXT,
   prev_fecha_vencimiento TEXT
 );
-CREATE INDEX IF NOT EXISTS ix_cxc_cli ON fact_cxc(k_cliente);
 CREATE INDEX IF NOT EXISTS ix_cxc_fac ON fact_cxc(k_cliente, no_factura);
 CREATE INDEX IF NOT EXISTS ix_cxc_est ON fact_cxc(estatus);
+CREATE INDEX IF NOT EXISTS ix_cxc_cli_est_fac ON fact_cxc(k_cliente, estacion_id, no_factura);
+DROP INDEX IF EXISTS ix_cxc_cli;
 
 CREATE TABLE IF NOT EXISTS fact_factura (      -- agregado por factura
   k_cliente         TEXT NOT NULL,

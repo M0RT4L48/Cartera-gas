@@ -18,6 +18,7 @@
   ];
   const ALIAS = { cliente: 'clientes', bitacora: 'usuarios' };
   let current = '';
+  let routeGeneration = 0;
 
   function renderNav() {
     const act = ALIAS[current] || current;
@@ -71,15 +72,28 @@
     return loadDashboard();
   };
   CG.refreshAlerts = CG.refreshKpis;
+  CG.isCurrentRoute = (generation) => generation === undefined || generation === routeGeneration;
 
   async function route(keep) {
     const { name, args, query } = parseHash();
     const fn = CG.routes[name] || CG.routes.cartera;
+    const generation = ++routeGeneration;
     current = CG.routes[name] ? name : 'cartera';
     renderNav();
-    CG.ensureKpis();
+    const kpisPromise = CG.ensureKpis();
     if (keep !== true) window.scrollTo(0, 0);
-    try { await fn(args, query, keep === true); } catch (e) { console.error(e); toast(e.message || 'Error', true); }
+    try {
+      if (current === 'cartera') {
+        await fn(args, query, keep === true, generation);
+      } else {
+        await kpisPromise;
+        if (generation !== routeGeneration) return;
+        await fn(args, query, keep === true, generation);
+      }
+    } catch (e) {
+      if (generation !== routeGeneration) return;
+      console.error(e); toast(e.message || 'Error', true);
+    }
   }
   CG.route = route;
 
@@ -143,7 +157,11 @@
       await start();
     } catch { showLogin(); }
   }
-  function showLogin() { $('#app').classList.add('hidden'); CG.closeModal(); $('#login').classList.remove('hidden'); $('#loginForm').reset(); $('#loginErr').className = 'err'; $('#loginErr').textContent = ''; }
+  function showLogin() {
+    sessionGeneration++;
+    routeGeneration++;
+    $('#app').classList.add('hidden'); CG.closeModal(); $('#login').classList.remove('hidden'); $('#loginForm').reset(); $('#loginErr').className = 'err'; $('#loginErr').textContent = '';
+  }
   CG.onLogout = showLogin;
 
   $('#loginForm').addEventListener('submit', async (e) => {

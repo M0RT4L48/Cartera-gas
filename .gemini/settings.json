@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "engram": {
+      "command": "C:\\Users\\moyoc\\AppData\\Local\\Engram\\bin\\engram-alpha.exe",
+      "args": ["mcp", "--db", "C:\\Users\\moyoc\\.gemini\\antigravity\\scratch\\Gas_App_Financiero\\cartera-gas\\.engram/graph.tepin"]
+    }
+  }
+}

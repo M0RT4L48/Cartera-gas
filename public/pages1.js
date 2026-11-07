@@ -6,26 +6,44 @@
   const estadoCuentaExpansiones = new Map();
 
   const kpiMini = (l, v, s, cls = '') => html`<div class="kpi mini ${cls}"><span class="l">${l}</span><span class="v">${v}</span><span class="s">${s}</span></div>`;
+  const resumenCartera = (d) => {
+    const maxA = Math.max(1, ...(d.aging || []).map((a) => a.monto));
+    return html`
+      <div class="grid g2" style="margin-bottom:20px">
+        <div class="card"><h3>Antigüedad de saldos <small>importe y no. de facturas</small></h3>
+          ${(d.aging || []).map((a, i) => html`<div class="hbar" data-act="rango" data-rango="${a.rango}" title="Filtrar facturas de este rango">
+            <span>${a.rango}</span><span class="t"><span class="f" style="width:${(a.monto / maxA) * 100}%;background:${PALETA[i]}"></span></span>
+            <span class="a">${money(a.monto)} <small>${int(a.facturas)}</small></span></div>`)}</div>
+        <div class="card"><h3>Facturado vs cobrado <small>últimos 12 meses</small></h3>
+          <div class="legend"><span><i style="background:#12239E"></i>Facturado</span><span><i style="background:#14B8A6"></i>Cobrado</span></div>
+          ${d.tendencia ? trendSVG(d.tendencia) : ''}</div>
+      </div>`.s;
+  };
 
   // =============== CARTERA ACTIVA ===============
   const facDefault = () => ({ q: '', estado: 'abiertas', rango: '', campo: 'factura', anio: '', mes: '', desde: '', hasta: '', sort: 'saldo', dir: 'desc', page: 1, k: '' });
-  CG.routes.cartera = async (args, query, keep) => {
+  CG.routes.cartera = async (args, query, keep, routeGeneration) => {
     let clientes = [];
     if (can('facturas') || can('facturas_crear')) {
-      try { clientes = await CG.clientesLista(false); } catch (e) { return errorView(e); }
+      try { clientes = await CG.clientesLista(false); } catch (e) {
+        if (CG.isCurrentRoute(routeGeneration)) errorView(e);
+        return;
+      }
     }
+    if (!CG.isCurrentRoute(routeGeneration)) return;
     const clientePick = clientePicker('fact-cliente', clientes, { placeholder: 'Escribe para buscar cliente…' });
     const st = { ...facDefault(), ...store.get('fac', {}) };
     if (!keep && query.estado) Object.assign(st, facDefault(), { estado: query.estado });
     if (!keep && query.k) Object.assign(st, facDefault(), { k: query.k, estado: 'abiertas' });
     const cat = S.cat;
-    const d = (await S.dashP) || {};
-    const maxA = Math.max(1, ...(d.aging || []).map((a) => a.monto));
+    let loadGeneration = 0;
     const load = async () => {
+      const request = ++loadGeneration;
       store.set('fac', st);
       $('#tbl').innerHTML = '<div class="empty">Cargando…</div>';
       try {
         const r = await api('/api/facturas?' + qs(gp({ q: st.q, estado: st.estado, rango: st.rango, campo: st.campo, anio: st.anio, mes: st.mes, desde: st.desde, hasta: st.hasta, sort: st.sort, dir: st.dir, page: st.page, k: st.k })));
+        if (!CG.isCurrentRoute(routeGeneration) || request !== loadGeneration) return;
         $('#tbl').innerHTML = html`
           <div class="tablewrap"><table><thead><tr>
             ${thSort('Cliente', 'cliente', st)}<th>Estación</th>${thSort('Factura', 'factura', st)}${thSort('F. factura', 'fecha_factura', st)}${thSort('Vencimiento', 'vencimiento', st)}
@@ -38,7 +56,9 @@
               : html`<tr><td colspan="10" class="empty">No hay facturas con estos filtros.</td></tr>`}</tbody>
             <tfoot><tr><td colspan="7">Totales de la selección</td><td class="n">${money(r.suma_importe)}</td><td class="n">${money(r.suma_saldo)}</td><td></td></tr></tfoot></table></div>
           ${pager(st, r.total, r.size)}`.s;
-      } catch (e) { $('#tbl').innerHTML = html`<div class="note">${e.message}</div>`.s; }
+      } catch (e) {
+        if (CG.isCurrentRoute(routeGeneration) && request === loadGeneration) $('#tbl').innerHTML = html`<div class="note">${e.message}</div>`.s;
+      }
     };
     setView(html`
       <div class="h"><h2>Cuentas por Cobrar</h2><p>Listado de facturas por cobrar al ${fdate(S.corte)}. Haz clic en un rango de antigüedad para filtrarlo.</p></div>
@@ -54,15 +74,7 @@
         <div class="err" id="facturaErr" style="margin-top:8px"></div>
         <button class="btn dark" type="submit" style="margin-top:12px">Guardar factura y saldo</button>
       </form>` : ''}
-      <div class="grid g2" style="margin-bottom:20px">
-        <div class="card"><h3>Antigüedad de saldos <small>importe y no. de facturas</small></h3>
-          ${(d.aging || []).map((a, i) => html`<div class="hbar" data-act="rango" data-rango="${a.rango}" title="Filtrar facturas de este rango">
-            <span>${a.rango}</span><span class="t"><span class="f" style="width:${(a.monto / maxA) * 100}%;background:${PALETA[i]}"></span></span>
-            <span class="a">${money(a.monto)} <small>${int(a.facturas)}</small></span></div>`)}</div>
-        <div class="card"><h3>Facturado vs cobrado <small>últimos 12 meses</small></h3>
-          <div class="legend"><span><i style="background:#12239E"></i>Facturado</span><span><i style="background:#14B8A6"></i>Cobrado</span></div>
-          ${d.tendencia ? trendSVG(d.tendencia) : ''}</div>
-      </div>
+      <div id="carteraSummary"><div class="grid g2" style="margin-bottom:20px"><div class="card">Cargando antigüedad…</div><div class="card">Cargando tendencia…</div></div></div>
       <div class="bar" id="filtros">
         <label>Buscar cliente o factura<input data-f="q" value="${st.q}" placeholder="Nombre o folio…" style="min-width:230px"></label>
         <label>Estado<select data-f="estado">${opt('abiertas', 'Abiertas (con saldo)', st.estado)}${opt('vencidas', 'Vencidas', st.estado)}${opt('porvencer', 'Por vencer', st.estado)}${opt('pagadas', 'Pagadas', st.estado)}${opt('todas', 'Todas', st.estado)}</select></label>
@@ -77,6 +89,10 @@
         <button class="btn small" data-act="limpiarFac">Limpiar</button>
         ${can('export') ? html`<button class="btn dark" data-act="exportFac">⬇ CSV</button>` : ''}
       </div><div id="tbl"></div>`);
+    S.dashP?.then((d) => {
+      const summary = $('#carteraSummary');
+      if (d && summary && CG.isCurrentRoute(routeGeneration)) summary.innerHTML = resumenCartera(d);
+    });
     const formFactura = $('#formNuevaFactura');
     if (formFactura) {
       const pickerInput = $('#fact-cliente');
@@ -108,11 +124,14 @@
         try {
           const result = await api('/api/cartera/facturas', { method: 'POST', body: payload });
           toast(`Factura registrada. Vence el ${fdate(result.fecha_vencimiento)}.`);
+          await CG.refreshKpis();
+          if (!CG.isCurrentRoute(routeGeneration)) return;
           formFactura.reset();
           actualizarVencimiento();
-          await CG.refreshKpis();
           await CG.route(true);
-        } catch (er) { $('#facturaErr').textContent = er.message; }
+        } catch (er) {
+          if (CG.isCurrentRoute(routeGeneration)) $('#facturaErr').textContent = er.message;
+        }
         finally { btn.disabled = false; }
       };
     }
