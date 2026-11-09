@@ -519,22 +519,41 @@ async function api(req, res, url) {
       const filasJerarquia = [];
       const aplanarJerarquia = (nodos, padre = '') => {
         for (const nodo of nodos) {
-          filasJerarquia.push({
-            fecha: nodo.fecha,
-            tipo_documento: nodo.tipo_documento,
-            folio: nodo.folio,
-            concepto: nodo.concepto,
-            fecha_vencimiento: nodo.fecha_vencimiento,
-            importe_original: nodo.importe_original,
-            importe_aplicado: nodo.importe_aplicado,
-            saldo_pendiente: nodo.saldo_pendiente,
-            naturaleza: nodo.naturaleza,
-            estatus: nodo.estatus,
-            equivalente_mxn: nodo.equivalente_mxn,
-            nivel: nodo.nivel,
-            documento_padre: padre,
-            validacion: (nodo.validaciones || []).map((validacion) => validacion.mensaje).join(' | '),
-          });
+          if (nodo.tipo_documento === 'Saldo Disponible') {
+            filasJerarquia.push({
+              fecha: '',
+              tipo_documento: '',
+              folio: '',
+              concepto: '',
+              fecha_vencimiento: '',
+              importe_original: '',
+              importe_aplicado: '',
+              saldo_pendiente: '',
+              naturaleza: '',
+              estatus: '',
+              equivalente_mxn: '',
+              nivel: nodo.nivel,
+              documento_padre: padre,
+              validacion: '',
+            });
+          } else {
+            filasJerarquia.push({
+              fecha: nodo.fecha,
+              tipo_documento: nodo.tipo_documento,
+              folio: nodo.folio,
+              concepto: nodo.concepto,
+              fecha_vencimiento: nodo.fecha_vencimiento,
+              importe_original: nodo.importe_original,
+              importe_aplicado: nodo.importe_aplicado,
+              saldo_pendiente: nodo.saldo_pendiente,
+              naturaleza: nodo.naturaleza,
+              estatus: nodo.estatus,
+              equivalente_mxn: nodo.equivalente_mxn,
+              nivel: nodo.nivel,
+              documento_padre: padre,
+              validacion: (nodo.validaciones || []).map((validacion) => validacion.mensaje).join(' | '),
+            });
+          }
           aplanarJerarquia(nodo.hijos || [], nodo.folio);
         }
       };

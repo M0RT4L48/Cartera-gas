@@ -582,6 +582,19 @@
         const expansiones = new Set(estadoCuentaExpansiones.get(c.k_cliente) || []);
         const importeEstado = (valor, moneda) => valor == null ? '—' : `${money(valor, 2)} ${moneda || 'MXN'}`;
         const filasTabla = filasEstado.map(({ nodo, padre, profundidad }) => {
+          if (nodo.tipo_documento === 'Saldo Disponible') {
+            return html`<tr class="estado-cuenta-nivel-${Math.min(profundidad + 1, 4)}" data-node-id="${nodo.id}"
+              data-parent-id="${padre}" style="${padre ? 'display:none' : ''}">
+              <td>&nbsp;</td>
+              <td>&nbsp;</td>
+              <td>&nbsp;</td>
+              <td>&nbsp;</td>
+              <td>&nbsp;</td>
+              <td>&nbsp;</td>
+              <td>&nbsp;</td>
+              <td>&nbsp;</td>
+            </tr>`;
+          }
           const expandible = Boolean(nodo.hijos && nodo.hijos.length);
           const expandido = expansiones.has(nodo.id);
           const validaciones = (nodo.validaciones || []).map((validacion) => validacion.mensaje).join(' ');
@@ -600,7 +613,7 @@
             <td>${nodo.concepto}${nodo.solo_referencia ? html`<br><span class="mut">Referencia; no se suma de nuevo al saldo</span>` : ''}</td>
             <td class="n">${importeEstado(nodo.importe_original, nodo.moneda)}</td>
             <td class="n">${importeEstado(nodo.importe_aplicado, nodo.moneda)}</td>
-            <td class="n ${nodo.tipo_documento === 'Saldo Disponible' ? 'strong pos' : 'strong'}">${importeEstado(nodo.saldo_pendiente, nodo.moneda)}</td>
+            <td class="n strong">${importeEstado(nodo.saldo_pendiente, nodo.moneda)}</td>
             <td>${nodo.estatus}${validaciones ? html`<br><span class="neg">${validaciones}</span>` : ''}</td>
           </tr>`;
         });
