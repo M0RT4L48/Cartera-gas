@@ -1334,7 +1334,7 @@ async function api(req, res, url) {
       if (!metodoRow) throw new HttpError(400, 'Selecciona un método de pago válido');
       metodoNombre = metodoRow.nombre;
       const esEfectivo = /^efectivo$/i.test(metodoNombre);
-      const requiereBancoDebito = !esEfectivo && Boolean(metodoRow.requiere_banco || /cheque|tarjeta|transferencia/i.test(metodoNombre));
+      const requiereBancoDebito = !esEfectivo && Boolean(metodoRow.requiere_banco);
       if (requiereBancoDebito) {
         if (!Number.isInteger(bancoId) || bancoId <= 0) throw new HttpError(400, `Selecciona un banco para el método ${metodoNombre}`);
         banco = (await q.get('SELECT nombre FROM bancos WHERE id=?', bancoId))?.nombre;

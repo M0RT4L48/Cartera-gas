@@ -108,7 +108,6 @@ const ready = (async () => {
       await q.run('ALTER TABLE usuario_estaciones_migracion RENAME TO usuario_estaciones');
     });
   }
-  await q.run("UPDATE metodos_pago SET requiere_banco=1 WHERE nombre='Tarjeta'");
 })();
 
 // ---------------- Roles y permisos ----------------

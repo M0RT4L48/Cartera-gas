@@ -278,7 +278,8 @@
         </form>`);
       const camposNormales = () => {
         const metodoVal = ($('#pago-metodo').value || '').trim();
-        const requiere = /^(cheque|tarjeta|transferencia)(?:\s|$)/i.test(metodoVal);
+        const met = (S.cat?.metodos_pago || []).find((m) => m.nombre.toLowerCase() === metodoVal.toLowerCase());
+        const requiere = met ? Boolean(met.requiere_banco) : false;
         $('#pago-banco-wrap').style.display = requiere ? '' : 'none';
         $('#pago-banco').required = requiere;
         if (!requiere) $('#pago-banco').value = '';
@@ -446,7 +447,8 @@
       e.preventDefault();
       $('#metodoPagoErr').textContent = '';
       try {
-        await api('/api/metodos-pago', { method: 'POST', body: Object.fromEntries(new FormData(fm)) });
+        const fd = new FormData(fm);
+        await api('/api/metodos-pago', { method: 'POST', body: { nombre: fd.get('nombre'), requiere_banco: fd.has('requiere_banco') ? 1 : 0 } });
         toast('Método de pago agregado'); await CG.loadCatalogos(); CG.route(true);
       } catch (er) { $('#metodoPagoErr').textContent = er.message; }
     };
@@ -790,7 +792,8 @@
     $('#formEditarMetodoPago').onsubmit = async (e) => {
       e.preventDefault();
       try {
-        await api('/api/metodos-pago/' + el.dataset.id, { method: 'PUT', body: Object.fromEntries(new FormData(e.target)) });
+        const fd = new FormData(e.target);
+        await api('/api/metodos-pago/' + el.dataset.id, { method: 'PUT', body: { nombre: fd.get('nombre'), requiere_banco: fd.has('requiere_banco') ? 1 : 0 } });
         toast('Método de pago actualizado'); closeModal(); await CG.loadCatalogos(); CG.route(true);
       } catch (er) { $('#editarMetodoPagoErr').textContent = er.message; }
     };

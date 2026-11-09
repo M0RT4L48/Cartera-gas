@@ -122,7 +122,8 @@
         const esAbono = f.querySelector('input[name=tipo]:checked').value === 'ABONO';
         $('#deb-metodo').required = true;
         const metodoVal = ($('#deb-metodo').value || '').trim();
-        const esConBanco = /^(cheque|tarjeta|transferencia)(?:\s|$)/i.test(metodoVal);
+        const met = (S.cat?.metodos_pago || []).find((m) => m.nombre.toLowerCase() === metodoVal.toLowerCase());
+        const esConBanco = met ? Boolean(met.requiere_banco) : false;
         bancoWrap.classList.toggle('hidden', !esConBanco);
         $('#deb-banco').required = esConBanco;
         if (!esConBanco) {
@@ -582,7 +583,8 @@
     renderPrepagoBox(0, false);
     const actualizarBanco = () => {
       const metodoVal = ($('#pago-metodo').value || '').trim();
-      const requiere = /^(cheque|tarjeta|transferencia)(?:\s|$)/i.test(metodoVal);
+      const met = (S.cat?.metodos_pago || []).find((m) => m.nombre.toLowerCase() === metodoVal.toLowerCase());
+      const requiere = met ? Boolean(met.requiere_banco) : false;
       $('#pago-banco-wrap').style.display = requiere ? '' : 'none';
       $('#pago-banco').required = requiere;
       if (!requiere) $('#pago-banco').value = '';
@@ -619,6 +621,12 @@
       $('#pagoErr').textContent = '';
       if (!cli) { $('#pagoErr').textContent = 'Selecciona un cliente de la lista.'; return; }
       if (!$('#pago-metodo').value) { $('#pagoErr').textContent = 'Selecciona un método de pago.'; return; }
+      const metodoVal = ($('#pago-metodo').value || '').trim();
+      const met = (S.cat?.metodos_pago || []).find((m) => m.nombre.toLowerCase() === metodoVal.toLowerCase());
+      if (met && met.requiere_banco && !$('#pago-banco').value) {
+        $('#pagoErr').textContent = `Selecciona un banco para el método ${met.nombre}.`;
+        return;
+      }
       const chk = $('#pago-usar-prepago');
       if (tienePrepago && chk && chk.checked) {
         $('#pagoErr').textContent = 'El saldo de prepago ya está a favor del cliente. Asígnalo a las facturas pendientes.';
@@ -639,6 +647,14 @@
       const chk = $('#pago-usar-prepago');
       const usarPrepago = tienePrepago && chk && chk.checked;
       if (!usarPrepago && !$('#pago-metodo').value) { $('#pagoErr').textContent = 'Selecciona un método de pago.'; return; }
+      if (!usarPrepago) {
+        const metodoVal = ($('#pago-metodo').value || '').trim();
+        const met = (S.cat?.metodos_pago || []).find((m) => m.nombre.toLowerCase() === metodoVal.toLowerCase());
+        if (met && met.requiere_banco && !$('#pago-banco').value) {
+          $('#pagoErr').textContent = `Selecciona un banco para el método ${met.nombre}.`;
+          return;
+        }
+      }
       const montoPrep = usarPrepago ? parseFloat($('#pago-prepago-monto')?.value) || 0 : 0;
       if (usarPrepago && !(montoPrep > 0)) { $('#pagoErr').textContent = 'Indica un monto de prepago mayor a cero.'; return; }
       if (usarPrepago && montoPrep > saldoPrepago + 0.005) { $('#pagoErr').textContent = `El monto excede el saldo de prepago disponible (${money(saldoPrepago, 2)})`; return; }
