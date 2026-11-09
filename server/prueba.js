@@ -562,7 +562,7 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal(d.email, 'contacto@prueba.mx'); assert.equal(d.telefono, '555-1234'); assert.equal(d.modo_carga, 'Vales débito');
     const listaClienteModo = await call('a', 'GET', '/api/clientes?q=Cliente Prueba SA');
     assert.equal(listaClienteModo.data.rows[0].modo_carga, 'Vales débito');
-    for (const modo of ['Vales débito', 'Vales crédito', 'Flotilla débito', 'Flotilla crédito', 'Código de barras', 'Firma autorizada', 'Cupón de carga']) {
+    for (const modo of ['Vales débito', 'Vales crédito', 'Flotilla débito', 'Flotilla crédito', 'Firma Autorizada Nota Cliente', 'Firma Autorizada Nota GPA']) {
       const actualizaModo = await call('a', 'PUT', '/api/clientes', {
         k_cliente: r.data.k_cliente, cliente: 'Cliente Prueba SA', estacion_id: 1, limite: 50000, dias: 15, modo_carga: modo,
       });

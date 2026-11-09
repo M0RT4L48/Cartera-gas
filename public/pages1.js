@@ -312,7 +312,7 @@
 
   // =============== CATÁLOGOS (clientes) ===============
   const cliDefault = () => ({ q: '', filtro: '', sort: 'cliente', dir: 'asc', page: 1 });
-  const modosCargaCliente = ['Vales débito', 'Vales crédito', 'Flotilla débito', 'Flotilla crédito', 'Código de barras', 'Firma autorizada', 'Cupón de carga'];
+  const modosCargaCliente = ['Vales débito', 'Vales crédito', 'Flotilla débito', 'Flotilla crédito', 'Firma Autorizada Nota Cliente', 'Firma Autorizada Nota GPA'];
   const modoCargaAnterior = {
     'Vales debito': 'Vales débito',
     'Vales Credito': 'Vales crédito',

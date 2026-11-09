@@ -71,7 +71,7 @@ function csv(res, nombre, cols, rows) {
 const exigir = (user, permiso) => { if (!can(user, permiso)) throw new HttpError(403, 'No tienes permiso para esta acción'); };
 const exigirAlguno = (user, ...permisos) => { if (!permisos.some((permiso) => can(user, permiso))) throw new HttpError(403, 'No tienes permiso para esta acción'); };
 const txt = (v, max = 300) => (v == null ? '' : String(v).trim().slice(0, max));
-const modosCargaCliente = ['Vales débito', 'Vales crédito', 'Flotilla débito', 'Flotilla crédito', 'Código de barras', 'Firma autorizada', 'Cupón de carga'];
+const modosCargaCliente = ['Vales débito', 'Vales crédito', 'Flotilla débito', 'Flotilla crédito', 'Firma Autorizada Nota Cliente', 'Firma Autorizada Nota GPA'];
 const modosCargaAnteriores = {
   'Vales debito': 'Vales débito',
   'Vales Credito': 'Vales crédito',
