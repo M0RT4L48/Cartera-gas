@@ -342,7 +342,7 @@
     setView(html`
       <div class="h" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
         <div><h2>Aplicación de Factura de Anticipo</h2><p>Aplica saldo individual de una factura de anticipo a una factura existente; el importe aplicado reduce el saldo pendiente en Cartera.</p></div>
-        ${can('aplicaciones_anticipo_crear') ? html`<button class="btn dark" data-act="agregarAnticipo">+ Aplicar Anticipo</button>` : ''}
+        ${can('aplicaciones_anticipo_crear') ? html`<button class="btn dark" data-act="aplicarAnticipo">+ Aplicar anticipo</button>` : ''}
       </div>
       <div class="bar" id="filtrosAplicaciones">
         <label>Buscar<input data-f="q" placeholder="Cliente, anticipo o factura"></label>
@@ -353,7 +353,7 @@
       const pg = e.target.closest('[data-page]');
       if (pg && !pg.disabled) { st.page = Number(pg.dataset.page); loadHistory(); }
     };
-    CG.acts.agregarAnticipo = () => {
+    CG.acts.aplicarAnticipo = CG.acts.agregarAnticipo = () => {
       clienteOpciones = null;
       opciones = { anticipos: [], facturas: [] };
       modal(html`<h2>Aplicar Anticipo</h2><div class="form">
