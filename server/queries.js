@@ -64,7 +64,7 @@ const ESTADO_SQL = `CASE WHEN f.saldo<=${EPS} THEN 'PAGADA' WHEN f.fecha_vencimi
 // Resumen por cliente: cartera, vencido, por facturar, limite, debito
 function CLIENTES(corte) {
   return `(SELECT c.k_cliente, c.cliente, c.no_cliente, ce.rfc AS rfc, ce.email AS email, ce.telefono AS telefono,
-      ce.modo_carga AS modo_carga, c.estacion_id, e.nombre AS estacion,
+      ce.modo_carga AS modo_carga, ce.tipo_cliente AS tipo_cliente, c.estacion_id, e.nombre AS estacion,
       COALESCE(cr.limite,0) AS limite, COALESCE(cr.dias,0) AS dias_credito, cr.origen AS credito_origen,
       COALESCE(fa.saldo_fact,0) AS saldo_fact, COALESCE(fa.vencido,0) AS vencido, COALESCE(fa.n_fact,0) AS n_fact,
       COALESCE(fa.max_dias,0) AS max_dias, COALESCE(pf.por_facturar,0) AS por_facturar,
@@ -401,13 +401,21 @@ async function aplicacionesAnticipo(p) {
 const ORDEN_CLI = {
   saldo: 'x.saldo_total', vencido: 'x.vencido', cliente: 'x.cliente', limite: 'x.limite', dias_credito: 'x.dias_credito',
   favor: 'x.saldo_anticipo', uso: '(CASE WHEN x.limite>0 THEN x.saldo_total/x.limite END)', por_facturar: 'x.por_facturar',
-  no: 'x.no_cliente', estacion: 'x.estacion', email: 'x.email', telefono: 'x.telefono', modo_carga: 'x.modo_carga',
+  no: 'x.no_cliente', estacion: 'x.estacion', email: 'x.email', telefono: 'x.telefono',
+  modo_carga: 'x.modo_carga', tipo_cliente: 'x.tipo_cliente',
   riesgo: RIESGO('x'),
 };
 async function clientes(p) {
   const wh = [], pr = [];
   filtrarEstaciones('x.estacion_id', p, wh, pr);
   if (p.q) { wh.push("(x.cliente LIKE ? ESCAPE '\\' OR COALESCE(x.no_cliente,'') LIKE ? ESCAPE '\\' OR COALESCE(x.rfc,'') LIKE ? ESCAPE '\\')"); pr.push(likeEsc(p.q), likeEsc(p.q), likeEsc(p.q)); }
+  if (p.tipo_cliente) { wh.push('x.tipo_cliente=?'); pr.push(p.tipo_cliente); }
+  if (p.modo_carga) {
+    const sinAcentos = [...'áéíóúÁÉÍÓÚ'].reduce((sql, letra, i) =>
+      `REPLACE(${sql},'${letra}','${'aeiouAEIOU'[i]}')`, "TRIM(x.modo_carga)");
+    wh.push(`LOWER(${sinAcentos})=?`);
+    pr.push(p.modo_carga.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase());
+  }
   if (p.filtro === 'saldo') wh.push(`x.saldo_total>${EPS}`);
   else if (p.filtro === 'vencido') wh.push(`x.vencido>${EPS}`);
   else if (p.filtro === 'excedido') wh.push(`x.limite>0 AND x.saldo_total>x.limite`);
@@ -614,7 +622,7 @@ async function estadoCuenta({ k, corte }) {
       SELECT f.fecha_despacho, 'Despacho pendiente de facturar',
         COALESCE(NULLIF(f.despacho,''), CAST(f.id AS TEXT)),
         COALESCE(NULLIF(f.producto,''), NULLIF(f.grupo,''), 'Consumo pendiente de facturar'),
-        NULL, f.importe, f.abono, f.importe-f.abono, 'Pendiente de Facturar', 'Pendiente de Facturar', 'MXN',
+        NULL, f.importe, f.abono, f.importe-f.abono, 'Pendiente de Facturar', f.estatus, 'MXN',
         1, f.importe-f.abono
       FROM v_cxc f
       WHERE f.k_cliente=? AND f.estatus='POR FACTURAR' AND f.fecha_despacho IS NOT NULL
@@ -637,7 +645,7 @@ async function estadoCuenta({ k, corte }) {
     ORDER BY ap.fecha_aplicacion, ap.id`, k);
   const facturas = await q.all(`SELECT * FROM ${FAC(corte)} WHERE k_cliente=?`, k);
   const despachos = await q.all(`SELECT id, origen, estacion_id, no_factura, fecha_despacho, despacho,
-      producto, grupo, importe, abono, estatus
+      producto, grupo, importe, abono, estatus, facturada_desde_pendiente
     FROM v_cxc WHERE k_cliente=? AND no_factura IS NOT NULL
       AND estatus NOT IN ('POR FACTURAR','CANCELADO','CANCELADA')
     ORDER BY fecha_despacho, despacho, id`, k);
@@ -673,7 +681,7 @@ async function estadoCuenta({ k, corte }) {
     tipo_cambio: 1,
     equivalente_mxn: null,
     naturaleza: 'Detalle de factura',
-    estatus: despacho.estatus,
+    estatus: despacho.facturada_desde_pendiente ? 'Facturado' : despacho.estatus,
     nivel,
     solo_referencia: true,
     validaciones: [],

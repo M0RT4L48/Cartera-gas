@@ -273,6 +273,7 @@ CREATE TABLE IF NOT EXISTS cliente_extra (     -- RFC y clientes dados de alta d
   email       TEXT,
   telefono    TEXT,
   modo_carga  TEXT,
+  tipo_cliente TEXT,
   editado_app INTEGER NOT NULL DEFAULT 0
 );
 

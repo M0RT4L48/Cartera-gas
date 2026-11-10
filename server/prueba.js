@@ -206,6 +206,11 @@ server.listen(0, '127.0.0.1', async () => {
       });
       assert.equal(despacho.status, 201, JSON.stringify(despacho.data));
       idsLimpieza.despacho = despacho.data.id;
+      assert.equal((await call('capturista', 'POST', '/api/cartera/facturas', {
+        k_cliente: cliPagos.k_cliente, no_factura: `CAP-ANT-${process.pid}`, fecha_factura: L.hoyISO(),
+        facturar_por_facturar: true, ids: [2000000000 + despacho.data.id], factura_anticipo_id: 1, nota_credito: 'NC-PRUEBA',
+      })).status, 403);
+      assert.equal((await L.q.get('SELECT estatus FROM fact_cxc_app WHERE id=?', despacho.data.id)).estatus, 'POR FACTURAR');
       const factura = await call('capturista', 'POST', '/api/cartera/facturas', {
         k_cliente: cliPagos.k_cliente, no_factura: `CAP-FACT-${process.pid}`, importe: 24, fecha_factura: L.hoyISO(),
       });
@@ -368,6 +373,8 @@ server.listen(0, '127.0.0.1', async () => {
       k_cliente: k, importe: 75, fecha_despacho: '2026-10-20', despacho: 'DESPACHO-ESTADO-CTA',
     });
     assert.equal(despachoPendiente.status, 201, JSON.stringify(despachoPendiente.data));
+    assert.equal((await L.q.get('SELECT estatus FROM fact_cxc_app WHERE id=?',
+      despachoPendiente.data.id)).estatus, 'POR FACTURAR');
     const despachoConvertido = await call('a', 'POST', '/api/por-facturar', {
       k_cliente: k, importe: 60, fecha_despacho: '2026-10-21', despacho: 'DESPACHO-YA-FACTURADO',
     });
@@ -381,6 +388,10 @@ server.listen(0, '127.0.0.1', async () => {
       facturar_por_facturar: true, ids: [2000000000 + despachoConvertido.data.id],
     });
     assert.equal(facturaDespacho.status, 201, JSON.stringify(facturaDespacho.data));
+    const despachoFacturadoEnDb = await L.q.get('SELECT estatus,facturada_desde_pendiente FROM fact_cxc_app WHERE id=?',
+      despachoConvertido.data.id);
+    assert.equal(despachoFacturadoEnDb.estatus, 'POR PAGAR');
+    assert.equal(despachoFacturadoEnDb.facturada_desde_pendiente, 1);
     const factura = await call('a', 'POST', '/api/cartera/facturas', {
       k_cliente: k, no_factura: 'FACTURA-ESTADO-CTA', importe: 50, fecha_factura: '2026-10-22',
     });
@@ -449,11 +460,15 @@ server.listen(0, '127.0.0.1', async () => {
     assert.ok(facturaMixtaVisible);
     assert.equal(facturaMixtaVisible.importe_original, 125, 'Cartera incluye solo el renglón ya facturado, no el despacho pendiente');
     assert.equal(facturaMixtaVisible.saldo_pendiente, 125);
+    const facturaDespachoVisible = completo.data.jerarquia.find((nodo) => nodo.folio === 'FACTURA-DESPACHO-ESTADO-CTA');
+    assert.equal(facturaDespachoVisible.hijos.find((nodo) => nodo.folio === 'DESPACHO-YA-FACTURADO').estatus, 'Facturado');
     assert.ok(documentos.some((row) => row.folio === 'DESPACHO-PENDIENTE-MIXTO' && row.saldo_pendiente === 25));
     assert.ok(!documentos.some((row) => row.folio === 'DESPACHO-YA-FACTURADO'), 'El despacho facturado no debe duplicar saldo');
     assert.ok(!documentos.some((row) => row.folio === 'DESPACHO-CANCELADO-ESTADO-CTA'), 'No debe aparecer un despacho cancelado');
     assert.ok(documentos.some((row) => row.folio === 'FACTURA-DESPACHO-ESTADO-CTA' && row.saldo_pendiente === 60));
     assert.ok(documentos.some((row) => row.folio === 'DESPACHO-ESTADO-CTA' && row.saldo_pendiente === 75));
+    assert.equal(documentos.find((row) => row.folio === 'DESPACHO-ESTADO-CTA').estatus, 'POR FACTURAR');
+    assert.equal(completo.data.jerarquia.find((nodo) => nodo.folio === 'DESPACHO-ESTADO-CTA').estatus, 'POR FACTURAR');
     const anticipoVisible = documentos.find((row) => row.tipo_documento === 'Factura de Anticipo');
     assert.ok(anticipoVisible);
     assert.ok(!Object.prototype.hasOwnProperty.call(anticipoVisible, 'uuid'));
@@ -554,14 +569,142 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal((await call('a', 'GET', '/api/debito/movimientos?k=' + enc(cliente.k_cliente))).status, 200);
   });
 
+  await t('despachos: factura y aplica anticipo automáticamente en una transacción', async () => {
+    const fecha = L.hoyISO();
+    const alta = await call('a', 'POST', '/api/clientes', { cliente: `Anticipo Despachos ${process.pid}`, estacion_id: 1 });
+    assert.equal(alta.status, 201, JSON.stringify(alta.data));
+    const k = alta.data.k_cliente;
+    const crearDespacho = async (folio, importe) => {
+      const r = await call('a', 'POST', '/api/por-facturar', { k_cliente: k, despacho: folio, importe, fecha_despacho: fecha });
+      assert.equal(r.status, 201, JSON.stringify(r.data));
+      return r.data.id;
+    };
+    const crearAnticipo = async (folio, importe, moneda = 'MXN') => {
+      const r = await call('a', 'POST', '/api/facturas-anticipo', {
+        k_cliente: k, folio, importe_original: importe, fecha_factura: fecha, moneda, tipo_cambio: moneda === 'MXN' ? 1 : 17,
+      });
+      assert.equal(r.status, 201, JSON.stringify(r.data));
+      return r.data.id;
+    };
+    const desp1 = await crearDespacho('DESP-AUTOMATICO-1', 100);
+    const desp2 = await crearDespacho('DESP-AUTOMATICO-2', 30);
+    const anticipo1 = await crearAnticipo('ANT-AUTOMATICO-1', 60);
+    const anticipo2 = await crearAnticipo('ANT-AUTOMATICO-2', 80);
+    const emitir = (id, folio, anticipo, nota) => call('a', 'POST', '/api/cartera/facturas', {
+      k_cliente: k, no_factura: folio, fecha_factura: fecha, facturar_por_facturar: true,
+      ids: [2000000000 + id], factura_anticipo_id: anticipo, nota_credito: nota,
+    });
+    const primero = await emitir(desp1, 'FACT-AUTOMATICA-1', anticipo1, 'NC-AUTOMATICA-1');
+    assert.equal(primero.status, 201, JSON.stringify(primero.data));
+    assert.equal(primero.data.aplicacion_anticipo.monto, 60);
+    assert.equal(primero.data.aplicacion_anticipo.saldo_disponible, 0);
+    const segundo = await emitir(desp2, 'FACT-AUTOMATICA-2', anticipo2, 'NC-AUTOMATICA-2');
+    assert.equal(segundo.status, 201, JSON.stringify(segundo.data));
+    assert.equal(segundo.data.aplicacion_anticipo.monto, 30);
+    assert.equal(segundo.data.aplicacion_anticipo.saldo_disponible, 50);
+    const aplicacion = await L.q.get('SELECT * FROM aplicaciones_factura_anticipo WHERE id=?', primero.data.aplicacion_anticipo.id);
+    assert.equal(aplicacion.no_factura, 'FACT-AUTOMATICA-1');
+    assert.equal(aplicacion.referencia, 'NC-AUTOMATICA-1');
+    assert.equal(aplicacion.importe_aplicado, 60);
+    const detalle = await call('a', 'GET', '/api/cliente?k=' + enc(k));
+    assert.equal(detalle.data.abiertas.find((f) => f.no_factura === 'FACT-AUTOMATICA-1').saldo, 40);
+    assert.ok(!detalle.data.abiertas.some((f) => f.no_factura === 'FACT-AUTOMATICA-2'));
+    assert.equal((await call('a', 'POST', `/api/aplicaciones-anticipo/${primero.data.aplicacion_anticipo.id}/cancelar`, {
+      motivo: 'Prueba de cancelación',
+    })).status, 200);
+    assert.equal((await L.q.get('SELECT saldo_disponible FROM facturas_anticipo WHERE id=?', anticipo1)).saldo_disponible, 60);
+    const detalleTrasCancelar = await call('a', 'GET', '/api/cliente?k=' + enc(k));
+    assert.equal(detalleTrasCancelar.data.abiertas.find((f) => f.no_factura === 'FACT-AUTOMATICA-1').saldo, 100);
+    const desp3 = await crearDespacho('DESP-AUTOMATICO-3', 40);
+    const usd = await crearAnticipo('ANT-AUTOMATICO-USD', 50, 'USD');
+    assert.equal((await emitir(desp3, 'FACT-AUTOMATICA-INVALIDA', usd, 'NC-INVALIDA')).status, 400);
+    const pendiente = await L.q.get('SELECT estatus,facturada_desde_pendiente FROM fact_cxc_app WHERE id=?', desp3);
+    assert.equal(pendiente.estatus, 'POR FACTURAR');
+    assert.equal(pendiente.facturada_desde_pendiente, 0);
+    assert.equal((await L.q.get('SELECT COUNT(*) n FROM aplicaciones_factura_anticipo WHERE no_factura=?', 'FACT-AUTOMATICA-INVALIDA')).n, 0);
+    assert.equal((await emitir(desp3, 'FACT-AUTOMATICA-INCOMPLETA', anticipo2, '')).status, 400);
+    assert.equal((await emitir(desp3, 'FACT-AUTOMATICA-SIN-ANTICIPO', '', '')).status, 201);
+  });
+
+  await t('clientes: filtros combinados de tipo y modo, totales y CSV', async () => {
+    const prefijo = `Filtro Clientes ${process.pid}`;
+    const clientes = [];
+    try {
+      for (const [nombre, estacion, tipo, modo] of [
+        ['Credito uno', 1, 'Crédito', 'Vales débito'],
+        ['Credito dos', 1, 'Crédito', 'Vales crédito'],
+        ['Debito', 1, 'Debito', 'Vales débito'],
+        ['Sin tipo', 1, '', 'Vales débito'],
+        ['Otra estacion', 2, 'Crédito', 'Vales débito'],
+      ]) {
+        const alta = await call('a', 'POST', '/api/clientes', {
+          cliente: `${prefijo} ${nombre}`, estacion_id: estacion, tipo_cliente: tipo, modo_carga: modo,
+        });
+        assert.equal(alta.status, 201, JSON.stringify(alta.data));
+        clientes.push(alta.data.k_cliente);
+      }
+      await L.q.run('UPDATE cliente_extra SET modo_carga=? WHERE k_cliente=?', 'Vales debito', clientes[0]);
+      const despacho = await call('a', 'POST', '/api/por-facturar', {
+        k_cliente: clientes[0], despacho: 'FILTRO-CLIENTES', importe: 50, fecha_despacho: L.hoyISO(),
+      });
+      assert.equal(despacho.status, 201, JSON.stringify(despacho.data));
+      const consultar = (filtros = {}) => call('a', 'GET', '/api/clientes?' + new URLSearchParams({
+        q: prefijo, estacion: '1', ...filtros,
+      }));
+      const todos = await consultar();
+      assert.equal(todos.data.total, 4);
+      assert.equal((await consultar({ tipo_cliente: 'Crédito' })).data.total, 2);
+      assert.equal((await consultar({ tipo_cliente: 'Debito' })).data.total, 1);
+      assert.equal((await consultar({ modo_carga: 'Vales débito' })).data.total, 3);
+      const combinado = await consultar({ tipo_cliente: 'Crédito', modo_carga: 'Vales débito', filtro: 'saldo' });
+      assert.equal(combinado.status, 200);
+      assert.equal(combinado.data.total, 1);
+      assert.equal(combinado.data.suma_saldo, 50);
+      assert.deepEqual(combinado.data.rows.map((row) => row.k_cliente), [clientes[0]]);
+      const paginaVacia = await consultar({ tipo_cliente: 'Crédito', page: '2', size: '10' });
+      assert.equal(paginaVacia.data.total, 2);
+      assert.deepEqual(paginaVacia.data.rows, []);
+      const sinCoincidencias = await consultar({ tipo_cliente: 'Debito', modo_carga: 'Vales crédito' });
+      assert.equal(sinCoincidencias.data.total, 0);
+      assert.deepEqual(sinCoincidencias.data.rows, []);
+      assert.equal((await consultar({ tipo_cliente: 'Crédito', modo_carga: 'Vales débito', estacion: '2' })).data.rows[0].k_cliente, clientes[4]);
+      assert.equal((await consultar({ tipo_cliente: 'Invalido' })).status, 400);
+      assert.equal((await consultar({ modo_carga: 'Invalido' })).status, 400);
+      const csv = await consultar({ tipo_cliente: 'Crédito', modo_carga: 'Vales débito', formato: 'csv' });
+      assert.equal(csv.status, 200);
+      assert.ok(csv.data.includes(`${prefijo} Credito uno`));
+      assert.ok(!csv.data.includes(`${prefijo} Debito`));
+      assert.ok(!csv.data.includes(`${prefijo} Credito dos`));
+    } finally {
+      for (const k of clientes) {
+        await L.q.run('DELETE FROM fact_cxc_app WHERE k_cliente=?', k);
+        await L.q.run('DELETE FROM credito WHERE k_cliente=?', k);
+        await L.q.run('DELETE FROM cliente_extra WHERE k_cliente=?', k);
+        await L.q.run('DELETE FROM dim_cliente WHERE k_cliente=?', k);
+      }
+    }
+  });
+
   // ---- catalogo / credito / gestiones ----
   await t('catálogo: alta de cliente, duplicado, RFC inválido y crédito', async () => {
-    const r = await call('a', 'POST', '/api/clientes', { cliente: 'Cliente Prueba SA', estacion_id: 1, no_cliente: 'P-1', rfc: 'abc010203xy1', limite: 50000, dias: 15, email: 'contacto@prueba.mx', telefono: '555-1234', modo_carga: 'Vales débito' });
+    const r = await call('a', 'POST', '/api/clientes', { cliente: 'Cliente Prueba SA', estacion_id: 1, no_cliente: 'P-1', rfc: 'abc010203xy1', limite: 50000, dias: 15, email: 'contacto@prueba.mx', telefono: '555-1234', modo_carga: 'Vales débito', tipo_cliente: 'Crédito' });
     assert.equal(r.status, 201, JSON.stringify(r.data));
     let d = (await call('a', 'GET', '/api/cliente?k=' + enc(r.data.k_cliente))).data.cliente; assert.equal(d.limite, 50000); assert.equal(d.dias_credito, 15); assert.equal(d.rfc, 'ABC010203XY1');
     assert.equal(d.email, 'contacto@prueba.mx'); assert.equal(d.telefono, '555-1234'); assert.equal(d.modo_carga, 'Vales débito');
+    assert.equal(d.tipo_cliente, 'Crédito');
+    assert.equal((await L.q.get('SELECT tipo_cliente FROM cliente_extra WHERE k_cliente=?', r.data.k_cliente)).tipo_cliente, 'Crédito');
     const listaClienteModo = await call('a', 'GET', '/api/clientes?q=Cliente Prueba SA');
     assert.equal(listaClienteModo.data.rows[0].modo_carga, 'Vales débito');
+    assert.equal(listaClienteModo.data.rows[0].tipo_cliente, 'Crédito');
+    const actualizaTipoCliente = await call('a', 'PUT', '/api/clientes', {
+      k_cliente: r.data.k_cliente, cliente: 'Cliente Prueba SA', estacion_id: 1, limite: 50000, dias: 15, tipo_cliente: 'Debito',
+    });
+    assert.equal(actualizaTipoCliente.status, 200);
+    assert.equal((await call('a', 'GET', '/api/cliente?k=' + enc(r.data.k_cliente))).data.cliente.tipo_cliente, 'Debito');
+    assert.equal((await L.q.get('SELECT tipo_cliente FROM cliente_extra WHERE k_cliente=?', r.data.k_cliente)).tipo_cliente, 'Debito');
+    assert.equal((await call('a', 'PUT', '/api/clientes', {
+      k_cliente: r.data.k_cliente, cliente: 'Cliente Prueba SA', estacion_id: 1, limite: 50000, dias: 15, tipo_cliente: 'Otro',
+    })).status, 400);
     for (const modo of ['Vales débito', 'Vales crédito', 'Flotilla débito', 'Flotilla crédito', 'Firma Autorizada Nota Cliente', 'Firma Autorizada Nota GPA']) {
       const actualizaModo = await call('a', 'PUT', '/api/clientes', {
         k_cliente: r.data.k_cliente, cliente: 'Cliente Prueba SA', estacion_id: 1, limite: 50000, dias: 15, modo_carga: modo,
@@ -574,7 +717,9 @@ server.listen(0, '127.0.0.1', async () => {
     });
     assert.equal(compatibilidadModo.status, 200);
     assert.equal((await call('a', 'GET', '/api/cliente?k=' + enc(r.data.k_cliente))).data.cliente.modo_carga, 'Vales débito');
-    for (const sort of ['no', 'cliente', 'estacion', 'email', 'telefono', 'modo_carga', 'limite', 'dias_credito', 'saldo', 'vencido', 'uso', 'favor', 'riesgo']) {
+    assert.equal((await call('a', 'GET', '/api/cliente?k=' + enc(r.data.k_cliente))).data.cliente.tipo_cliente, 'Debito',
+      'Al editar otros campos se conserva el tipo de cliente');
+    for (const sort of ['no', 'cliente', 'estacion', 'email', 'telefono', 'modo_carga', 'tipo_cliente', 'limite', 'dias_credito', 'saldo', 'vencido', 'uso', 'favor', 'riesgo']) {
       const ordenada = await call('a', 'GET', '/api/clientes?q=Cliente Prueba SA&sort=' + sort + '&dir=asc');
       assert.equal(ordenada.status, 200, `No se pudo ordenar por ${sort}`);
       assert.equal(ordenada.data.rows[0].k_cliente, r.data.k_cliente);

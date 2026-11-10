@@ -31,7 +31,6 @@
       }
     }
     if (!CG.isCurrentRoute(routeGeneration)) return;
-    const clientePick = clientePicker('fact-cliente', clientes, { placeholder: 'Escribe para buscar cliente…' });
     const st = { ...facDefault(), ...store.get('fac', {}) };
     if (!keep && query.estado) Object.assign(st, facDefault(), { estado: query.estado });
     if (!keep && query.k) Object.assign(st, facDefault(), { k: query.k, estado: 'abiertas' });
@@ -61,19 +60,10 @@
       }
     };
     setView(html`
-      <div class="h"><h2>Cuentas por Cobrar</h2><p>Listado de facturas por cobrar al ${fdate(S.corte)}. Haz clic en un rango de antigüedad para filtrarlo.</p></div>
-      ${can('facturas') || can('facturas_crear') ? html`<form id="formNuevaFactura" class="formcard" style="margin-bottom:20px">
-        <h3>Registrar factura o saldo nuevo</h3>
-        <div class="grid g3">
-          <label>Cliente${clientePick.html}</label>
-          <label>Factura<input name="no_factura" maxlength="80" required></label>
-          <label>Importe ($)<input name="importe" type="number" min="0.01" max="1000000000" step="0.01" required></label>
-          <label>Fecha de factura<input name="fecha_factura" type="date" max="${hoyLocal()}" value="${hoyLocal()}" required></label>
-        </div>
-        <div class="mut" id="factVencimiento" style="margin-top:8px">Selecciona cliente y fecha de factura para calcular el vencimiento según sus días de crédito.</div>
-        <div class="err" id="facturaErr" style="margin-top:8px"></div>
-        <button class="btn dark" type="submit" style="margin-top:12px">Guardar factura y saldo</button>
-      </form>` : ''}
+      <div class="h" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div><h2>Cuentas por Cobrar</h2><p>Listado de facturas por cobrar al ${fdate(S.corte)}. Haz clic en un rango de antigüedad para filtrarlo.</p></div>
+        ${can('facturas') || can('facturas_crear') ? html`<button class="btn dark" data-act="nuevaFacturaCartera">+ Registrar factura o saldo nuevo</button>` : ''}
+      </div>
       <div id="carteraSummary"><div class="grid g2" style="margin-bottom:20px"><div class="card">Cargando antigüedad…</div><div class="card">Cargando tendencia…</div></div></div>
       <div class="bar" id="filtros">
         <label>Buscar cliente o factura<input data-f="q" value="${st.q}" placeholder="Nombre o folio…" style="min-width:230px"></label>
@@ -93,8 +83,21 @@
       const summary = $('#carteraSummary');
       if (d && summary && CG.isCurrentRoute(routeGeneration)) summary.innerHTML = resumenCartera(d);
     });
-    const formFactura = $('#formNuevaFactura');
-    if (formFactura) {
+    CG.acts.nuevaFacturaCartera = () => {
+      if (!can('facturas') && !can('facturas_crear')) return;
+      const clientePick = clientePicker('fact-cliente', clientes, { placeholder: 'Escribe para buscar cliente…' });
+      modal(html`<h2>Registrar factura o saldo nuevo</h2>
+        <form id="formNuevaFactura" class="form">
+          <label>Cliente${clientePick.html}</label>
+          <label>Factura<input name="no_factura" maxlength="80" required></label>
+          <label>Importe ($)<input name="importe" type="number" min="0.01" max="1000000000" step="0.01" required></label>
+          <label>Fecha de factura<input name="fecha_factura" type="date" max="${hoyLocal()}" value="${hoyLocal()}" required></label>
+          <div class="full mut" id="factVencimiento">Selecciona cliente y fecha de factura para calcular el vencimiento según sus días de crédito.</div>
+          <div class="full err" id="facturaErr"></div>
+          <div class="full actions"><button class="btn" type="button" data-act="cerrar">Cancelar</button>
+            <button class="btn dark" type="submit">Guardar factura y saldo</button></div>
+        </form>`, { wide: true });
+      const formFactura = $('#formNuevaFactura');
       const pickerInput = $('#fact-cliente');
       const fechaInput = formFactura.elements.namedItem('fecha_factura');
       const actualizarVencimiento = () => {
@@ -124,17 +127,17 @@
         try {
           const result = await api('/api/cartera/facturas', { method: 'POST', body: payload });
           toast(`Factura registrada. Vence el ${fdate(result.fecha_vencimiento)}.`);
+          if ($('#formNuevaFactura') === formFactura) closeModal();
           await CG.refreshKpis();
           if (!CG.isCurrentRoute(routeGeneration)) return;
-          formFactura.reset();
-          actualizarVencimiento();
           await CG.route(true);
         } catch (er) {
-          if (CG.isCurrentRoute(routeGeneration)) $('#facturaErr').textContent = er.message;
+          if (CG.isCurrentRoute(routeGeneration) && $('#formNuevaFactura') === formFactura) $('#facturaErr').textContent = er.message;
+          else toast(er.message, 'bad');
         }
         finally { btn.disabled = false; }
       };
-    }
+    };
     bindFilters($('#filtros'), st, load);
     $('#view').onclick = (e) => {
       const th = e.target.closest('th[data-sort]'); const pg = e.target.closest('[data-page]');
@@ -311,7 +314,7 @@
   };
 
   // =============== CATÁLOGOS (clientes) ===============
-  const cliDefault = () => ({ q: '', filtro: '', sort: 'cliente', dir: 'asc', page: 1 });
+  const cliDefault = () => ({ q: '', filtro: '', tipo_cliente: '', modo_carga: '', sort: 'cliente', dir: 'asc', page: 1 });
   const modosCargaCliente = ['Vales débito', 'Vales crédito', 'Flotilla débito', 'Flotilla crédito', 'Firma Autorizada Nota Cliente', 'Firma Autorizada Nota GPA'];
   const modoCargaAnterior = {
     'Vales debito': 'Vales débito',
@@ -319,29 +322,42 @@
     'Flotilla debito': 'Flotilla débito',
     'Flotilla Credito': 'Flotilla crédito',
   };
-  const modoCargaActual = (modo) => modoCargaAnterior[modo] || modo;
+  const modoCargaActual = (modo) => {
+    const valor = String(modo || '').trim();
+    return modoCargaAnterior[valor] ||
+      modosCargaCliente.find((actual) => actual.localeCompare(valor, 'es', { sensitivity: 'base' }) === 0) ||
+      valor;
+  };
+  const botonEditarCliente = (c, clase, etiqueta) => html`<button class="${clase}" data-act="editCliente"
+    data-k="${c.k_cliente}" data-est="${c.estacion_id}" data-lim="${c.limite}" data-dias="${c.dias_credito}"
+    data-rfc="${c.rfc || ''}" data-email="${c.email || ''}" data-telefono="${c.telefono || ''}"
+    data-modo-carga="${c.modo_carga || ''}" data-tipo-cliente="${c.tipo_cliente || ''}"
+    data-no="${c.no_cliente || ''}" data-nombre="${c.cliente}">${etiqueta}</button>`;
   CG.routes.catalogos = async ([vista] = []) => {
     const soloClientes = vista === 'clientes';
     const st = { ...cliDefault(), ...store.get('cli', {}) };
+    let solicitudClientes = 0;
     const load = async () => {
+      const solicitud = ++solicitudClientes;
       store.set('cli', st);
       $('#tbl').innerHTML = '<div class="empty">Cargando…</div>';
       try {
         const r = await api('/api/clientes?' + qs(gp({ ...st })));
+        if (solicitud !== solicitudClientes) return;
         $('#tbl').innerHTML = html`
-          <div class="tablewrap"><table><thead><tr>${thSort('No. cliente', 'no', st)}${thSort('Nombre', 'cliente', st)}${thSort('Estación', 'estacion', st)}${thSort('Correo electrónico', 'email', st)}${thSort('Teléfono', 'telefono', st)}${thSort('Modo de carga', 'modo_carga', st)}${thSort('Límite crédito', 'limite', st, 'n')}
+          <div class="tablewrap"><table><thead><tr>${thSort('No. cliente', 'no', st)}${thSort('Nombre', 'cliente', st)}${thSort('Estación', 'estacion', st)}${thSort('Correo electrónico', 'email', st)}${thSort('Teléfono', 'telefono', st)}${thSort('Tipo de cliente', 'tipo_cliente', st)}${thSort('Modo de carga', 'modo_carga', st)}${thSort('Límite crédito', 'limite', st, 'n')}
             ${thSort('Días crédito', 'dias_credito', st, 'n')}${thSort('Saldo CxC', 'saldo', st, 'n')}${thSort('Vencido', 'vencido', st, 'n')}${thSort('Uso del límite', 'uso', st)}${thSort('Saldo anticipo', 'favor', st, 'n')}${thSort('Riesgo', 'riesgo', st)}<th></th></tr></thead>
             <tbody>${r.rows.length ? r.rows.map((c) => html`<tr class="click" data-go="#/cliente/${encodeURIComponent(c.k_cliente)}"><td class="mut">${c.no_cliente || 'N/A'}</td>
               <td class="wrap"><b>${c.cliente}</b>${c.rfc ? html`<br><small class="mut">RFC: ${c.rfc}</small>` : ''}</td><td>${corto(c.estacion)}</td>
-              <td class="wrap">${c.email || ''}</td><td>${c.telefono || ''}</td><td>${modoCargaActual(c.modo_carga || '')}</td>
+              <td class="wrap">${c.email || ''}</td><td>${c.telefono || ''}</td><td>${c.tipo_cliente || ''}</td><td>${modoCargaActual(c.modo_carga || '')}</td>
               <td class="n">${money(c.limite)}</td><td class="n">${c.dias_credito}</td><td class="n strong">${money(c.saldo_total)}</td><td class="n ${c.vencido > 0 ? 'neg' : ''}">${money(c.vencido)}</td>
               <td>${useBar(c.uso)}</td><td class="n ${c.saldo_anticipo > 0 ? 'pos strong' : ''}">${c.saldo_anticipo ? money(c.saldo_anticipo) : ''}</td>
               <td>${c.saldo_total > 0.005 || c.limite > 0 ? badge(c.riesgo) : ''}</td>
-              <td>${can('clientes') ? html`<button class="btn small" data-act="editCliente" data-k="${c.k_cliente}" data-est="${c.estacion_id}" data-lim="${c.limite}" data-dias="${c.dias_credito}" data-rfc="${c.rfc || ''}" data-email="${c.email || ''}" data-telefono="${c.telefono || ''}" data-modo-carga="${c.modo_carga || ''}" data-no="${c.no_cliente || ''}" data-nombre="${c.cliente}">Editar</button>` : ''}</td></tr>`)
-              : html`<tr><td colspan="14" class="empty">Sin clientes para este filtro.</td></tr>`}</tbody>
-            <tfoot><tr><td colspan="8">Totales de la selección</td><td class="n">${money(r.suma_saldo)}</td><td class="n">${money(r.suma_vencido)}</td><td colspan="4"></td></tr></tfoot></table></div>
+              <td>${can('clientes') ? botonEditarCliente(c, 'btn small', 'Editar') : ''}</td></tr>`)
+              : html`<tr><td colspan="15" class="empty">Sin clientes para este filtro.</td></tr>`}</tbody>
+            <tfoot><tr><td colspan="9">Totales de la selección</td><td class="n">${money(r.suma_saldo)}</td><td class="n">${money(r.suma_vencido)}</td><td colspan="4"></td></tr></tfoot></table></div>
           ${pager(st, r.total, r.size)}`.s;
-      } catch (e) { $('#tbl').innerHTML = html`<div class="note">${e.message}</div>`.s; }
+      } catch (e) { if (solicitud === solicitudClientes) $('#tbl').innerHTML = html`<div class="note">${e.message}</div>`.s; }
     };
     const estOpts = S.cat.estaciones;
     setView(html`
@@ -390,6 +406,8 @@
       ${soloClientes ? html`<div class="bar" id="filtros">
         <label>Buscar<input data-f="q" value="${st.q}" placeholder="Nombre, número o RFC…" style="min-width:240px"></label>
         <label>Mostrar<select data-f="filtro">${opt('', 'Todos', st.filtro)}${opt('saldo', 'Con saldo pendiente', st.filtro)}${opt('vencido', 'Con saldo vencido', st.filtro)}${opt('excedido', 'Sobre su límite', st.filtro)}${opt('sinlimite', 'Con saldo y sin límite', st.filtro)}${opt('favor', 'Con anticipo disponible', st.filtro)}</select></label>
+        <label>Tipo de cliente<select data-f="tipo_cliente">${opt('', 'Todos', st.tipo_cliente)}${opt('Crédito', 'Crédito', st.tipo_cliente)}${opt('Debito', 'Debito', st.tipo_cliente)}</select></label>
+        <label>Modo de carga<select data-f="modo_carga">${opt('', 'Todos', st.modo_carga)}${modosCargaCliente.map((modo) => opt(modo, modo, st.modo_carga))}</select></label>
         <span class="sp"></span>${can('export') ? html`<button class="btn dark" data-act="exportCli">⬇ CSV</button>` : ''}</div><div id="tbl"></div>`
       : ''}`);
     if (soloClientes) {
@@ -411,6 +429,7 @@
         <label>Días crédito<input name="dias" type="number" min="0" max="365" step="1" placeholder="15"></label>
         <label>Correo electrónico<input name="email" type="email" maxlength="254"></label>
         <label>Teléfono<input name="telefono" type="tel" maxlength="40"></label>
+        <label>Tipo de cliente<select name="tipo_cliente">${opt('', 'Sin especificar')}${opt('Crédito', 'Crédito')}${opt('Debito', 'Debito')}</select></label>
         <label>Modo de carga<select name="modo_carga">${opt('', 'Selecciona un modo')}${modosCargaCliente.map((modo) => opt(modo, modo))}</select></label>
         <div class="full err" id="cliErr"></div><div class="full actions">
           <button type="button" class="btn" data-act="cerrar">Cancelar</button><button class="btn dark" type="submit">Guardar cliente</button>
@@ -545,7 +564,7 @@
     setView(html`
       <div class="crumb"><a href="#/clientes">‹ Catálogo de clientes</a></div>
       <div class="head"><div><h2>${c.cliente}</h2><div class="pill-row"><span class="badge b-info">${corto(c.estacion)}</span>${c.modo_carga ? html`<span class="badge b-mut">Modo: ${c.modo_carga}</span>` : ''}${c.no_cliente ? html`<span class="badge b-mut">No. ${c.no_cliente}</span>` : ''}${c.rfc ? html`<span class="badge b-mut">RFC ${c.rfc}</span>` : ''}${badge(c.riesgo)}</div></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="#/cartera?k=${encodeURIComponent(c.k_cliente)}">Ver facturas</a>${can('clientes') ? html`<button class="btn accent" data-act="editCliente" data-k="${c.k_cliente}" data-est="${c.estacion_id}" data-lim="${c.limite}" data-dias="${c.dias_credito}" data-rfc="${c.rfc || ''}" data-email="${c.email || ''}" data-telefono="${c.telefono || ''}" data-no="${c.no_cliente || ''}" data-nombre="${c.cliente}">Editar cliente</button>` : ''}</div></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="#/cartera?k=${encodeURIComponent(c.k_cliente)}">Ver facturas</a>${can('clientes') ? botonEditarCliente(c, 'btn accent', 'Editar cliente') : ''}</div></div>
       ${can('export') ? html`<form id="formEstadoCuenta" class="inline-form" style="margin-top:12px">
         <button class="btn dark" type="submit">Ver estado de cuenta actual</button>
         <div class="err" id="estadoCuentaErr" role="alert" style="flex-basis:100%"></div>
@@ -763,6 +782,7 @@
       <label>Días de crédito<input name="dias" type="number" min="0" max="365" step="1" value="${el.dataset.dias}" required></label>
       <label>Correo electrónico<input name="email" type="email" maxlength="254" value="${el.dataset.email}"></label>
       <label>Teléfono<input name="telefono" type="tel" maxlength="40" value="${el.dataset.telefono}"></label>
+      <label>Tipo de cliente<select name="tipo_cliente">${opt('', 'Sin especificar', el.dataset.tipoCliente)}${opt('Crédito', 'Crédito', el.dataset.tipoCliente)}${opt('Debito', 'Debito', el.dataset.tipoCliente)}</select></label>
       <label>Modo de carga<select name="modo_carga">${opt('', 'Sin especificar', modoCargaActual(el.dataset.modoCarga))}${modosCargaCliente.map((modo) => opt(modo, modo, modoCargaActual(el.dataset.modoCarga)))}</select></label>
       <div class="full note info">El cambio de estación traslada los registros del cliente. El identificador interno permanece estable y los cambios se conservan al importar Excel.</div>
       <div class="full err" id="credErr"></div>

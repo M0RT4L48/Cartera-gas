@@ -177,7 +177,7 @@ Es la pantalla central de cuentas por cobrar. Muestra todas las facturas de cré
 #### Componentes y Funciones:
 - **Gráfica de Antigüedad de Saldos (Aging):** Muestra barras interactivas por rango (No vencido, 1-15, 16-30, 31-60, 61-90, 91-120, más de 120 días). Al hacer clic en una barra, la tabla se filtra inmediatamente por ese rango.
 - **Gráfica de Facturado vs Cobrado:** Comparativa mes a mes de los últimos 12 meses.
-- **Formulario "Registrar factura o saldo nuevo" (Solo Gestor / Admin):**
+- **Botón "Registrar factura o saldo nuevo":** abre un formulario para usuarios con permiso de crear facturas.
   - Permite dar de alta una factura capturada en la app para cualquier cliente existente.
   - Al seleccionar cliente y fecha de emisión, muestra en tiempo real la fecha de vencimiento proyectada calculada con los días de crédito del cliente.
 - **Filtros Avanzados:**
@@ -224,6 +224,7 @@ Concentra todos aquellos despachos de combustible otorgados a crédito que han s
   - Abre un modal con la lista de despachos pendientes del cliente.
   - Permite marcar/desmarcar con casillas de verificación cuáles despachos se incluirán en la factura.
   - Solicita el número de factura y fecha de emisión.
+  - Con permiso para aplicar anticipos, opcionalmente selecciona una Factura de Anticipo disponible en MXN y captura la Nota de Crédito. Al emitir se aplica el menor entre el saldo disponible y el saldo de la nueva factura, con la fecha actual. Si falla la aplicación, no se emite la factura.
   - Al procesar, los despachos seleccionados se marcan como facturados y se genera la nueva factura en **Cartera Activa** con su saldo correspondiente.
 
 ---
@@ -273,8 +274,8 @@ La pestaña **Clientes** concentra el catálogo y la administración de la infor
 
 #### Catálogo de Clientes:
 - Formulario de alta rápida de clientes con: Nombre, estación asignada, número de cliente, RFC, límite de crédito, días de crédito, correo, teléfono y modo de carga (Vales débito, Vales crédito, Flotilla débito, Flotilla crédito, Código de barras, Firma autorizada o Cupón de carga).
-- Tabla maestra ordenable por sus columnas (ascendente/descendente), con búsqueda por RFC, nombre o folio, modo de carga entre teléfono y límite de crédito, y filtros de riesgo: *Con saldo*, *Vencido*, *Excedido*, *Sin límite*, *Con saldo a favor*.
-- Exportación completa a CSV.
+- Tabla maestra ordenable por sus columnas (ascendente/descendente), con búsqueda por RFC, nombre o número de cliente, y filtros combinables de tipo de cliente, modo de carga y situación de saldo. Cada filtro permite seleccionar una opción o *Todos*.
+- Exportación a CSV con los mismos filtros aplicados.
 
 #### Ficha Individual del Cliente (Vista 360°):
 Al hacer clic en cualquier cliente en cualquier parte del sistema, se abre su ficha detallada:

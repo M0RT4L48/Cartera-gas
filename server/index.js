@@ -80,6 +80,39 @@ const modosCargaAnteriores = {
 };
 const normalizarModoCarga = (valor) => modosCargaAnteriores[valor] || valor;
 const redondea = (n) => Math.round(n * 100) / 100;
+async function registrarAplicacionAnticipo({ k, idAnticipo, estacionId, noFactura, fecha, importe, idempotencia, referencia, observaciones, corte, user, direccionIp }) {
+  const anticipo = await q.get('SELECT * FROM facturas_anticipo WHERE id=?', idAnticipo);
+  if (!anticipo) throw new HttpError(404, 'Factura de Anticipo no encontrada');
+  if (anticipo.k_cliente !== k) throw new HttpError(400, 'La Factura de Anticipo no pertenece al cliente seleccionado');
+  if (anticipo.estado === 'CANCELADA') throw new HttpError(400, 'La Factura de Anticipo está cancelada');
+  if (anticipo.estado === 'CERRADA' || Number(anticipo.saldo_disponible) <= Q.EPS) throw new HttpError(400, 'La Factura de Anticipo está cerrada o no tiene saldo disponible');
+  if (anticipo.moneda !== 'MXN') throw new HttpError(400, 'Las facturas existentes no registran moneda; solo se pueden aplicar anticipos MXN');
+  const factura = await q.get(`SELECT abierta,saldo FROM ${Q.FAC(corte)}
+    WHERE k_cliente=? AND estacion_id=? AND no_factura=?`, k, estacionId, noFactura);
+  if (!factura) throw new HttpError(404, 'Factura de despacho no encontrada');
+  if (!factura.abierta || Number(factura.saldo) <= Q.EPS) throw new HttpError(400, 'La factura de despacho está cancelada, cerrada o sin saldo pendiente');
+  const monto = importe == null ? redondea(Math.min(Number(anticipo.saldo_disponible), Number(factura.saldo))) : importe;
+  if (!(monto > 0) || monto > 1e9) throw new HttpError(400, 'El importe a aplicar debe ser mayor a cero y no exceder $1,000,000,000');
+  if (monto > Number(anticipo.saldo_disponible) + Q.EPS) throw new HttpError(400, 'El importe excede el saldo disponible de la Factura de Anticipo');
+  if (monto > Number(factura.saldo) + Q.EPS) throw new HttpError(400, `El importe excede el saldo pendiente de la factura (${Number(factura.saldo).toFixed(2)})`);
+  const r = await q.run(`INSERT INTO aplicaciones_factura_anticipo
+    (idempotencia,k_cliente,factura_anticipo_id,estacion_id,no_factura,fecha_aplicacion,importe_aplicado,
+     moneda,tipo_cambio,estado,referencia,observaciones,created_by)
+    VALUES (?,?,?,?,?,?,?,'MXN',1,'APLICADA',?,?,?)`,
+  idempotencia, k, idAnticipo, estacionId, noFactura, fecha, monto, referencia, observaciones, user.usuario);
+  const aplicacionId = Number(r.lastInsertRowid);
+  const saldoAplicado = await q.run(`UPDATE facturas_anticipo
+    SET importe_aplicado=ROUND(importe_aplicado+?,2),saldo_disponible=ROUND(saldo_disponible-?,2),
+      estado=CASE WHEN ROUND(saldo_disponible-?,2)<=? THEN 'CERRADA' ELSE 'PARCIALMENTE_APLICADA' END,
+      updated_at=datetime('now'),updated_by=?
+    WHERE id=? AND k_cliente=? AND estado IN ('ABIERTA','PARCIALMENTE_APLICADA') AND moneda='MXN' AND saldo_disponible>=?`,
+  monto, monto, monto, Q.EPS, user.usuario, idAnticipo, k, monto);
+  if (saldoAplicado.changes !== 1) throw new HttpError(409, 'El saldo del anticipo cambió; actualiza la pantalla e intenta de nuevo');
+  const updated = await q.get('SELECT importe_aplicado,saldo_disponible,estado FROM facturas_anticipo WHERE id=?', idAnticipo);
+  await L.bitacora(user, 'APLICACION_ANTICIPO_ALTA',
+    `AP-${aplicacionId} anticipo #${idAnticipo} factura ${noFactura}; saldo ${anticipo.saldo_disponible}->${updated.saldo_disponible}; aplicado $${monto}`, direccionIp);
+  return { id: aplicacionId, ...updated, monto };
+}
 function datosFacturaAnticipo(body) {
   const folio = txt(body.folio, 80);
   const serie = txt(body.serie, 30) || null;
@@ -484,11 +517,13 @@ async function api(req, res, url) {
     }
     if (p === '/api/clientes') {
       const pr = await params(query, user);
+      if (pr.tipo_cliente && !['Crédito', 'Debito'].includes(pr.tipo_cliente)) throw new HttpError(400, 'Tipo de cliente inválido');
+      if (pr.modo_carga && !modosCargaCliente.includes(pr.modo_carga)) throw new HttpError(400, 'Modo de carga inválido');
       if (pr.formato === 'csv') {
         exigir(user, 'export');
         const r = await Q.clientes({ ...pr, todo: true });
         await L.bitacora(user, 'EXPORT', `clientes ${r.total}`, ip(req));
-        return csv(res, 'clientes.csv', [['estacion', 'Estación'], ['cliente', 'Cliente'], ['no_cliente', 'No. cliente'], ['rfc', 'RFC'], ['email', 'Correo electrónico'], ['telefono', 'Teléfono'], ['modo_carga', 'Modo de carga'], ['limite', 'Límite de crédito'],
+        return csv(res, 'clientes.csv', [['estacion', 'Estación'], ['cliente', 'Cliente'], ['no_cliente', 'No. cliente'], ['rfc', 'RFC'], ['email', 'Correo electrónico'], ['telefono', 'Teléfono'], ['tipo_cliente', 'Tipo de cliente'], ['modo_carga', 'Modo de carga'], ['limite', 'Límite de crédito'],
           ['dias_credito', 'Días de crédito'], ['saldo_fact', 'Saldo facturado'], ['vencido', 'Vencido'], ['por_facturar', 'Por facturar'],
           ['saldo_total', 'Saldo total'], ['disponible', 'Disponible'], ['max_dias', 'Máx. días vencido'], ['saldo_anticipo', 'Saldo disponible de anticipos'], ['riesgo', 'Riesgo']], r.rows);
       }
@@ -1006,6 +1041,13 @@ async function api(req, res, url) {
     if (facturarPendientes) {
       if (!noFactura) throw new HttpError(400, 'El número de factura es obligatorio');
       if (!L.esFecha(fechaFactura) || fechaFactura > L.hoyISO()) throw new HttpError(400, 'La fecha de factura es inválida o futura');
+      const anticipoId = b.factura_anticipo_id == null || b.factura_anticipo_id === '' ? null : Number(b.factura_anticipo_id);
+      const notaCredito = txt(b.nota_credito, 100);
+      if ((anticipoId !== null) !== Boolean(notaCredito)) throw new HttpError(400, 'Selecciona una Factura de Anticipo y captura la Nota de Crédito, o deja ambos campos vacíos');
+      if (anticipoId !== null) {
+        exigir(user, 'aplicaciones_anticipo_crear');
+        if (!Number.isSafeInteger(anticipoId) || anticipoId <= 0) throw new HttpError(400, 'Selecciona una Factura de Anticipo válida');
+      }
       const ids = Array.isArray(b.ids) ? b.ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0) : [];
       if (!ids.length || new Set(ids).size !== ids.length) throw new HttpError(400, 'Selecciona uno o más despachos pendientes de facturar');
       const qsIds = ids.map(() => '?').join(',');
@@ -1023,7 +1065,7 @@ async function api(req, res, url) {
       const vencimiento = new Date(`${fechaFactura}T00:00:00.000Z`);
       vencimiento.setUTCDate(vencimiento.getUTCDate() + diasCredito);
       const fechaVencimiento = vencimiento.toISOString().slice(0, 10);
-      await tx(async () => {
+      const aplicacion = await tx(async () => {
         for (const fila of filas) {
           if (fila.origen === 'app') {
             const actualizado = await q.run(`UPDATE fact_cxc_app SET facturada_desde_pendiente=1,
@@ -1039,9 +1081,17 @@ async function api(req, res, url) {
             if (actualizado.changes !== 1) throw new HttpError(409, 'Uno o más despachos cambiaron; no se emitió la factura');
           }
         }
+        if (anticipoId !== null) {
+          return registrarAplicacionAnticipo({
+            k: cliente.k_cliente, idAnticipo: anticipoId, estacionId: cliente.estacion_id, noFactura,
+            fecha: L.hoyISO(), importe: null, idempotencia: crypto.randomUUID(), referencia: notaCredito,
+            observaciones: null, corte: await Q.corteValido(), user, direccionIp: ip(req),
+          });
+        }
+        return null;
       });
       await L.bitacora(user, 'FACTURA_EMITIDA', `${noFactura} $${suma.toFixed(2)} ${cliente.k_cliente} (${filas.length} despachos)`, ip(req));
-      return send(res, 201, { ok: true, k_cliente: cliente.k_cliente, no_factura: noFactura, importe: redondea(suma), fecha_factura: fechaFactura, fecha_vencimiento: fechaVencimiento, actualizados: filas.length });
+      return send(res, 201, { ok: true, k_cliente: cliente.k_cliente, no_factura: noFactura, importe: redondea(suma), fecha_factura: fechaFactura, fecha_vencimiento: fechaVencimiento, actualizados: filas.length, aplicacion_anticipo: aplicacion });
     }
     const importe = redondea(L.num(b.importe, -1));
     if (!noFactura) throw new HttpError(400, 'El número de factura es obligatorio');
@@ -1256,35 +1306,10 @@ async function api(req, res, url) {
         }
         throw new HttpError(409, 'La clave de idempotencia ya se utilizó para otra aplicación');
       }
-      const anticipo = await q.get('SELECT * FROM facturas_anticipo WHERE id=?', idAnticipo);
-      if (!anticipo) throw new HttpError(404, 'Factura de Anticipo no encontrada');
-      if (anticipo.k_cliente !== k) throw new HttpError(400, 'La Factura de Anticipo no pertenece al cliente seleccionado');
-      if (anticipo.estado === 'CANCELADA') throw new HttpError(400, 'La Factura de Anticipo está cancelada');
-      if (anticipo.estado === 'CERRADA' || Number(anticipo.saldo_disponible) <= Q.EPS) throw new HttpError(400, 'La Factura de Anticipo está cerrada o no tiene saldo disponible');
-      if (anticipo.moneda !== 'MXN') throw new HttpError(400, 'Las facturas existentes no registran moneda; solo se pueden aplicar anticipos MXN');
-      const factura = await q.get(`SELECT abierta,saldo FROM ${Q.FAC(corte)}
-        WHERE k_cliente=? AND estacion_id=? AND no_factura=?`, k, estacionId, noFactura);
-      if (!factura) throw new HttpError(404, 'Factura de despacho no encontrada');
-      if (!factura.abierta || Number(factura.saldo) <= Q.EPS) throw new HttpError(400, 'La factura de despacho está cancelada, cerrada o sin saldo pendiente');
-      if (importe > Number(anticipo.saldo_disponible) + Q.EPS) throw new HttpError(400, 'El importe excede el saldo disponible de la Factura de Anticipo');
-      if (importe > Number(factura.saldo) + Q.EPS) throw new HttpError(400, `El importe excede el saldo pendiente de la factura (${Number(factura.saldo).toFixed(2)})`);
-      const r = await q.run(`INSERT INTO aplicaciones_factura_anticipo
-        (idempotencia,k_cliente,factura_anticipo_id,estacion_id,no_factura,fecha_aplicacion,importe_aplicado,
-         moneda,tipo_cambio,estado,referencia,observaciones,created_by)
-        VALUES (?,?,?,?,?,?,?,'MXN',1,'APLICADA',?,?,?)`,
-      idempotencia, k, idAnticipo, estacionId, noFactura, fecha, importe, referencia, observaciones, user.usuario);
-      const aplicacionId = Number(r.lastInsertRowid);
-      const saldoAplicado = await q.run(`UPDATE facturas_anticipo
-        SET importe_aplicado=ROUND(importe_aplicado+?,2),saldo_disponible=ROUND(saldo_disponible-?,2),
-          estado=CASE WHEN ROUND(saldo_disponible-?,2)<=? THEN 'CERRADA' ELSE 'PARCIALMENTE_APLICADA' END,
-          updated_at=datetime('now'),updated_by=?
-        WHERE id=? AND k_cliente=? AND estado IN ('ABIERTA','PARCIALMENTE_APLICADA') AND moneda='MXN' AND saldo_disponible>=?`,
-      importe, importe, importe, Q.EPS, user.usuario, idAnticipo, k, importe);
-      if (saldoAplicado.changes !== 1) throw new HttpError(409, 'El saldo del anticipo cambió; actualiza la pantalla e intenta de nuevo');
-      const updated = await q.get('SELECT importe_aplicado,saldo_disponible,estado FROM facturas_anticipo WHERE id=?', idAnticipo);
-      await L.bitacora(user, 'APLICACION_ANTICIPO_ALTA',
-        `AP-${aplicacionId} anticipo #${idAnticipo} factura ${noFactura}; saldo ${anticipo.saldo_disponible}->${updated.saldo_disponible}; aplicado $${importe}`, ip(req));
-      return { id: aplicacionId, ...updated };
+      const { monto, ...aplicacion } = await registrarAplicacionAnticipo({
+        k, idAnticipo, estacionId, noFactura, fecha, importe, idempotencia, referencia, observaciones, corte, user, direccionIp: ip(req),
+      });
+      return aplicacion;
     });
     return send(res, resultado.repetida ? 200 : 201, { ok: true, ...resultado });
   }
@@ -1410,6 +1435,8 @@ async function api(req, res, url) {
     const telefono = txt(b.telefono, 40);
     const modoCarga = normalizarModoCarga(txt(b.modo_carga, 40)) || null;
     if (modoCarga && !modosCargaCliente.includes(modoCarga)) throw new HttpError(400, 'Modo de carga inválido');
+    const tipoCliente = txt(b.tipo_cliente, 20) || null;
+    if (tipoCliente && !['Crédito', 'Debito'].includes(tipoCliente)) throw new HttpError(400, 'Tipo de cliente inválido');
     const limite = L.num(b.limite, 0), dias = Math.trunc(L.num(b.dias, 0));
     if (limite < 0 || limite > 1e9) throw new HttpError(400, 'Límite inválido');
     if (dias < 0 || dias > 365) throw new HttpError(400, 'Días de crédito inválidos (0-365)');
@@ -1418,8 +1445,8 @@ async function api(req, res, url) {
     const nc = txt(b.no_cliente, 30) || null;
     await tx(async () => {
       await q.run('INSERT INTO dim_cliente(k_cliente,cliente,estacion_id,no_cliente) VALUES (?,?,?,?)', k, nombre, est.id, nc);
-      await q.run('INSERT INTO cliente_extra(k_cliente,rfc,creado_app,cliente,estacion_id,no_cliente,email,telefono,modo_carga) VALUES (?,?,1,?,?,?,?,?,?)',
-        k, rfc || null, nombre, est.id, nc, email || null, telefono || null, modoCarga);
+      await q.run('INSERT INTO cliente_extra(k_cliente,rfc,creado_app,cliente,estacion_id,no_cliente,email,telefono,modo_carga,tipo_cliente) VALUES (?,?,1,?,?,?,?,?,?,?)',
+        k, rfc || null, nombre, est.id, nc, email || null, telefono || null, modoCarga, tipoCliente);
       await q.run("INSERT INTO credito(k_cliente,limite,dias,origen,actualizado_por,actualizado) VALUES (?,?,?,'app',?,datetime('now'))", k, limite, dias, user.usuario);
     });
     await L.bitacora(user, 'CLIENTE_ALTA', `${k} límite ${limite} días ${dias}`, ip(req));
@@ -1451,6 +1478,10 @@ async function api(req, res, url) {
       ? (await q.get('SELECT modo_carga FROM cliente_extra WHERE k_cliente=?', k) || {}).modo_carga || null
       : txt(b.modo_carga, 40) || null);
     if (modoCarga && !modosCargaCliente.includes(modoCarga)) throw new HttpError(400, 'Modo de carga inválido');
+    const tipoCliente = b.tipo_cliente === undefined
+      ? (await q.get('SELECT tipo_cliente FROM cliente_extra WHERE k_cliente=?', k) || {}).tipo_cliente || null
+      : txt(b.tipo_cliente, 20) || null;
+    if (tipoCliente && !['Crédito', 'Debito'].includes(tipoCliente)) throw new HttpError(400, 'Tipo de cliente inválido');
     const limite = L.num(b.limite, -1), dias = Math.trunc(L.num(b.dias, -1));
     if (limite < 0 || limite > 1e9) throw new HttpError(400, 'Límite inválido');
     if (dias < 0 || dias > 365) throw new HttpError(400, 'Días de crédito inválidos (0-365)');
@@ -1459,11 +1490,12 @@ async function api(req, res, url) {
       for (const table of ['fact_cxc', 'fact_factura', 'fact_debito', 'pagos', 'debito_app', 'fact_cxc_app', 'aplicaciones_factura_anticipo']) {
         await q.run(`UPDATE ${table} SET estacion_id=? WHERE k_cliente=?`, estacionId, k);
       }
-      await q.run(`INSERT INTO cliente_extra(k_cliente,rfc,cliente,estacion_id,no_cliente,email,telefono,modo_carga,editado_app)
-        VALUES (?,?,?,?,?,?,?,?,1)
+      await q.run(`INSERT INTO cliente_extra(k_cliente,rfc,cliente,estacion_id,no_cliente,email,telefono,modo_carga,tipo_cliente,editado_app)
+        VALUES (?,?,?,?,?,?,?,?,?,1)
         ON CONFLICT(k_cliente) DO UPDATE SET rfc=excluded.rfc,cliente=excluded.cliente,estacion_id=excluded.estacion_id,
-          no_cliente=excluded.no_cliente,email=excluded.email,telefono=excluded.telefono,modo_carga=excluded.modo_carga,editado_app=1`,
-      k, rfc || null, nombre, estacionId, noCliente, email || null, telefono || null, modoCarga);
+          no_cliente=excluded.no_cliente,email=excluded.email,telefono=excluded.telefono,modo_carga=excluded.modo_carga,
+          tipo_cliente=excluded.tipo_cliente,editado_app=1`,
+      k, rfc || null, nombre, estacionId, noCliente, email || null, telefono || null, modoCarga, tipoCliente);
       await q.run(`INSERT INTO credito(k_cliente,limite,dias,origen,actualizado_por,actualizado)
         VALUES (?,?,?,'app',?,datetime('now'))
         ON CONFLICT(k_cliente) DO UPDATE SET limite=excluded.limite,dias=excluded.dias,origen='app',

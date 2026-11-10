@@ -821,13 +821,18 @@
   CG.acts.emitirFacturaCliente = async (el) => {
     const puedeFacturar = can('facturas') || can('facturas_crear');
     const puedeEditarDespacho = can('editar_despacho');
+    const puedeAplicarAnticipo = puedeFacturar && can('aplicaciones_anticipo_ver') && can('aplicaciones_anticipo_crear');
     if (!puedeFacturar && !puedeEditarDespacho) { toast('No tienes permiso para esta acción.', 'bad'); return; }
     const cliente = String(el.dataset.cliente || 'Cliente');
     const k = el.dataset.k;
-    let pendientes;
+    let pendientes, anticipos = [];
     try {
-      const r = await api('/api/por-facturar?' + qs(gp({ k })));
+      const [r, opciones] = await Promise.all([
+        api('/api/por-facturar?' + qs(gp({ k }))),
+        puedeAplicarAnticipo ? api('/api/aplicaciones-anticipo/opciones?' + qs(gp({ k }))) : Promise.resolve(null),
+      ]);
       pendientes = r.rows[0] && r.rows[0].items || [];
+      if (opciones) anticipos = opciones.anticipos;
     } catch (e) { toast(e.message, 'bad'); return; }
     if (!pendientes.length) { toast('Este cliente no tiene despachos pendientes de facturar.', 'warn'); await CG.route(true); return; }
     modal(html`
@@ -836,6 +841,12 @@
         <label>Cliente<input value="${cliente}" readonly></label>
         ${puedeFacturar ? html`<label>Folio / No. factura<input name="no_factura" maxlength="80" required></label>
           <label>Fecha de factura<input name="fecha_factura" type="date" max="${hoyLocal()}" value="${hoyLocal()}" required></label>` : ''}
+        ${puedeAplicarAnticipo ? html`<label>Factura de Anticipo<select name="factura_anticipo_id" id="anticipoDespachos">
+          ${opt('', anticipos.length ? 'Sin anticipo' : 'Sin anticipos disponibles en MXN')}
+          ${anticipos.map((a) => opt(a.id, `${a.serie ? `${a.serie}-` : ''}${a.folio} · disponible ${money(a.saldo_disponible, 2)} MXN`))}
+        </select></label>
+        <label>Nota de Crédito<input name="nota_credito" maxlength="100"></label>
+        <div class="full note info" id="resumenAnticipoDespachos">Selecciona un anticipo y captura la nota de crédito para aplicarlo automáticamente.</div>` : ''}
         <label class="full">Filtrar por producto<select id="filtroProductoDespachos">
           ${opt('', 'Todos los productos')}
           ${opt('__sin_producto__', 'Sin producto')}
@@ -987,6 +998,12 @@
       if (!puedeFacturar) return;
       const total = checks().filter((c) => c.checked).reduce((sum, c) => sum + Number(c.dataset.monto), 0);
       $('#totalSeleccionado').textContent = money(total, 2);
+      if (puedeAplicarAnticipo) {
+        const anticipo = anticipos.find((a) => String(a.id) === $('#anticipoDespachos').value);
+        $('#resumenAnticipoDespachos').textContent = anticipo
+          ? `Se aplicarán hasta ${money(Math.min(total, Number(anticipo.saldo_disponible)), 2)} MXN según los saldos vigentes al guardar.`
+          : 'Selecciona un anticipo y captura la nota de crédito para aplicarlo automáticamente.';
+      }
       const all = checks().filter((c) => !c.closest('tr').hidden);
       $('#seleccionarTodosDespachos').checked = all.length > 0 && all.every((c) => c.checked);
       $('#seleccionarTodosDespachos').indeterminate = all.some((c) => c.checked) && !all.every((c) => c.checked);
@@ -996,6 +1013,7 @@
       updateTotal();
     };
     $('#despachosEmitir').onchange = updateTotal;
+    if (puedeAplicarAnticipo) $('#anticipoDespachos').onchange = updateTotal;
     updateTotal();
     form.onsubmit = async (e) => {
       e.preventDefault();
@@ -1004,11 +1022,18 @@
       const payload = Object.fromEntries(new FormData(form).entries());
       const ids = checks().filter((c) => c.checked).map((c) => Number(c.value));
       if (!ids.length) { $('#emitirFacturaErr').textContent = 'Selecciona al menos un despacho.'; return; }
+      if (puedeAplicarAnticipo && Boolean(payload.factura_anticipo_id) !== Boolean((payload.nota_credito || '').trim())) {
+        $('#emitirFacturaErr').textContent = 'Selecciona una Factura de Anticipo y captura la Nota de Crédito, o deja ambos campos vacíos.';
+        return;
+      }
       const btn = form.querySelector('button[type="submit"]');
       btn.disabled = true;
       try {
-        const r = await api('/api/cartera/facturas', { method: 'POST', body: { k_cliente: k, no_factura: payload.no_factura, fecha_factura: payload.fecha_factura, facturar_por_facturar: true, ids } });
-        toast(`Factura ${r.no_factura} emitida para ${cliente}. ${money(r.importe, 2)} transferidos a cartera.`);
+        const r = await api('/api/cartera/facturas', { method: 'POST', body: {
+          k_cliente: k, no_factura: payload.no_factura, fecha_factura: payload.fecha_factura, facturar_por_facturar: true, ids,
+          factura_anticipo_id: payload.factura_anticipo_id || '', nota_credito: payload.nota_credito || '',
+        } });
+        toast(`Factura ${r.no_factura} emitida para ${cliente}. ${money(r.importe, 2)} transferidos a cartera.${r.aplicacion_anticipo ? ` Anticipo aplicado: ${money(r.aplicacion_anticipo.monto, 2)}.` : ''}`);
         closeModal();
         await CG.route(true);
       } catch (err) { $('#emitirFacturaErr').textContent = err.message; }
